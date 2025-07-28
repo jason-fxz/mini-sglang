@@ -1,0 +1,13 @@
+[project]
+name = "mini-sglang"
+version = "0.1.0"
+description = "A lightweight SGLang implementation built from scratch."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.7.1",
+]
+
+[tool.codespell]
+skip = "*.git,*.lock"
+ignore-words-list = "cann"
