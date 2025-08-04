@@ -2,21 +2,24 @@
 Batch information
 """
 
+from __future__ import annotations
+
 import dataclasses
 from enum import IntEnum, auto
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import torch
 
-from mini_sglang.layers.attn.attn_backend import AttentionBackend
+if TYPE_CHECKING:
+    from mini_sglang.layers.attn.attn_backend import AttentionBackend
 
 
 class ForwardMode(IntEnum):
-    PREFILL = auto()
+    EXTEND = auto()
     DECODE = auto()
 
-    def is_prefill(self) -> bool:
-        return self == ForwardMode.PREFILL
+    def is_extend(self) -> bool:
+        return self == ForwardMode.EXTEND
 
     def is_decode(self) -> bool:
         return self == ForwardMode.DECODE
@@ -29,9 +32,9 @@ class BatchInfo:
     """
     for prefill (with prefix match)
 
-    |    prefix_ids    |      input_ids      |
-    | <- prefix_len -> | <- input_seq_len -> |
-    | <-             seq_len              -> |
+    |      prefix_ids      |      input_ids      |
+    | <- prefix_seq_len -> | <- input_seq_len -> |
+    | <-               seq_len                -> |
 
     for decode: input_seq_len = 1
 
@@ -50,13 +53,14 @@ class BatchInfo:
     input_seq_lens: torch.Tensor
     # full sequence lengths   shape: [batch_size]
     seq_lens: torch.Tensor
+    # prefix sequence lengths   shape: [batch_size]
+    prefix_seq_lens: torch.Tensor
+
+    # output cache location in the token_to_kv_pool  shape: [batch_size]
+    out_cache_loc: torch.Tensor
 
     # Attention Backends
-    attn_backend: AttentionBackend
+    attn_backend: AttentionBackend = None
 
-    ## for FA3
-    # Used in FA3 prefill mode
-    # cu_seqlens_q = [0, input_seq_len_1, input_seq_len_1 + input_seq_len_2, ...]
-    cu_seqlens_q: Optional[torch.Tensor] = None
-    # cu_seqlens_k = [0, seq_len_1, seq_len_1 + seq_len_2, ...]
-    cu_seqlens_k: Optional[torch.Tensor] = None
+    # KV cache
+    req_pool_indices: torch.Tensor
