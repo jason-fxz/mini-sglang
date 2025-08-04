@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 import torch
@@ -36,7 +38,7 @@ class AttentionBackend(ABC):
                 **kwargs,
             )
         else:
-            return self.forward_prefill(
+            return self.forward_extend(
                 q,
                 k,
                 v,
@@ -58,7 +60,7 @@ class AttentionBackend(ABC):
         """Run a forward for decode."""
         raise NotImplementedError()
 
-    def forward_prefill(
+    def forward_extend(
         self,
         q: torch.Tensor,
         k: torch.Tensor,

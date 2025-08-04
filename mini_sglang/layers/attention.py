@@ -16,12 +16,14 @@ class Attention(nn.Module):
         head_dim: int,
         scale: float,
         num_kv_heads: int,
+        layer_id: int,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.scale = scale
         self.num_kv_heads = num_kv_heads
+        self.layer_id = layer_id
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, batch: BatchInfo

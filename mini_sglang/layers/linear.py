@@ -170,8 +170,9 @@ class QKVParallelLinear(ColumnParallelLinear):
         self.total_num_kv_heads = (
             total_num_kv_heads if total_num_kv_heads is not None else total_num_heads
         )
-        self.num_heads = check_divide(total_num_heads, self.tp_size)
-        self.num_kv_heads = check_divide(self.total_num_kv_heads, self.tp_size)
+        tp_size = dist.get_world_size()
+        self.num_heads = check_divide(total_num_heads, tp_size)
+        self.num_kv_heads = check_divide(self.total_num_kv_heads, tp_size)
         input_size = hidden_size
         output_size = (
             self.total_num_heads + 2 * self.total_num_kv_heads

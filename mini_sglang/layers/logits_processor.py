@@ -20,8 +20,9 @@ class LogitsProcessorOutput:
 
 
 class LogitsProcessor(nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
+        self.config = config
 
     def forward(
         self,
@@ -41,8 +42,8 @@ class LogitsProcessor(nn.Module):
             LogitsProcessorOutput
         """
 
-        if batch.forward_mode.is_prefill():
-            # for PREFILL mode, only compute the last token's logits
+        if batch.forward_mode.is_extend():
+            # for EXTEND mode, only compute the last token's logits
             last_indices = batch.cu_seqlens_q[1:] - 1
             hidden_states = hidden_states[last_indices].contiguous()
 
