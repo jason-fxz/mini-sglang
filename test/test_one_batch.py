@@ -26,6 +26,30 @@ def setup_dist():
     dist.destroy_process_group()
 
 
+def print_batch_info(batch: BatchInfo):
+    logger.info(
+        "Forward Mode: %s\n"
+        "Input IDs: %s\n"
+        "Positions: %s\n"
+        "Input Sequence Lengths: %s\n"
+        "Full Sequence Lengths: %s\n"
+        "Prefix Sequence Lengths: %s\n"
+        "Number of Requests: %d\n"
+        "Requests:\n%s",
+        batch.forward_mode,
+        batch.input_ids.tolist(),
+        batch.positions.tolist(),
+        batch.input_seq_lens.tolist() if batch.input_seq_lens is not None else "N/A",
+        batch.seq_lens.tolist() if batch.seq_lens is not None else "N/A",
+        batch.prefix_seq_lens.tolist() if batch.prefix_seq_lens is not None else "N/A",
+        len(batch.reqs),
+        "\n".join(
+            f"  Request ID: {req.req_id}, Status: {req.status}, Tokens: {req.token_ids}"  # type: ignore
+            for req in batch.reqs
+        ),
+    )
+
+
 def test_one_batch():
     model_path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
     server_args = ServerArgs(model=model_path)
@@ -47,7 +71,7 @@ def test_one_batch():
     assert model_runner is not None
     assert tokenizer is not None
 
-    sampling_params = SamplingParams(0.0, 64, eos_token_id=tokenizer.eos_token_id)
+    sampling_params = SamplingParams(1.0, 64, eos_token_id=tokenizer.eos_token_id)
 
     # Prepare a batch of input data
     input_texts = [
@@ -73,12 +97,13 @@ def test_one_batch():
     batch.prepare_for_extend()
     logits = model_runner.forward_extend(batch)
     model_runner.process_extend_result(batch, logits)
+    print_batch_info(batch)
 
     for i in range(10):
-        batch.prepare_for_extend()
-        logits = model_runner.forward_extend(batch)
+        batch.prepare_for_decode()
+        logits = model_runner.forward_decode(batch)
         model_runner.process_decode_result(batch, logits)
-
+        print_batch_info(batch)
     # Detokenize the output
     output_texts = []
     for req in batch.reqs:

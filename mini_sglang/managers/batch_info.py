@@ -181,6 +181,10 @@ class BatchInfo:
         self.prefix_seq_lens = None
         self.input_seq_lens = None
 
+        input_ids_tensor = torch.tensor(sum(input_ids, []), dtype=torch.int32).to(
+            self.device, non_blocking=True
+        )
+
         # Alloc kv cache
         if self.page_allocator.page_size == 1:
             out_cache_loc = self.page_allocator.alloc(bs).to(
@@ -192,5 +196,7 @@ class BatchInfo:
             raise RuntimeError("Currently only support page size of 1 for kv cache")
 
         # Write to req2token pool
+        self.out_cache_loc = out_cache_loc
         self.req_to_token_pool.write((self.req_pool_indices, locs), self.out_cache_loc)
         self.positions = locs
+        self.input_ids = input_ids_tensor

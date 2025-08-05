@@ -41,14 +41,14 @@ class ReqToTokenPool:
         self.req_to_token = torch.zeros(
             (size, max_tokens), dtype=torch.int32, device=device
         )
-        self.req_to_page = torch.zeros(
-            (size, self.max_page_num), dtype=torch.int32, device=device
-        )
+        # self.req_to_page = torch.zeros(
+        #     (size, self.max_page_num), dtype=torch.int32, device=device
+        # )
 
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
-        self.req_to_page[indices] = values
+        self.req_to_token[indices] = values
 
     def available_size(self):
         return len(self.free_slots)
