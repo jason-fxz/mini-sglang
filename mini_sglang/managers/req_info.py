@@ -3,6 +3,8 @@ from enum import Enum, auto
 from itertools import count
 from typing import List
 
+import torch
+
 from mini_sglang.managers.sampling_params import SamplingParams
 from mini_sglang.managers.server_args import ServerArgs
 
@@ -17,18 +19,28 @@ class Req:
     counter = count()
 
     def __init__(
-        self, token_ids: List[int], sampling_params: SamplingParams, req_pool_idx: int
+        self,
+        token_ids: List[int],
+        sampling_params: SamplingParams,
+        req_pool_idx: int = -1,
     ):
         self.req_id = next(Req.counter)
         self.status = ReqStatus.WAITING
-        self.token_ids = copy(token_ids)
-        self.last_token_id = token_ids[-1] if token_ids else None
-        self.num_tokens = len(token_ids)
+        self.token_ids = copy(token_ids)  # upd
+        self.last_token_id = token_ids[-1] if token_ids else None  # upd
         self.max_tokens = sampling_params.max_tokens
         self.num_prompt_tokens = len(token_ids)
         self.ignore_eos = sampling_params.ignore_eos
         self.sampling_params = sampling_params
         self.req_pool_idx = req_pool_idx
+
+        # prefix info
+        # The indices to kv cache for shared prefix
+        self.prefix_indices: torch.tensor = torch.tensor([], dtype=torch.int32)  # upd
+
+    @property
+    def num_tokens(self) -> int:
+        return len(self.token_ids)
 
     def __len__(self):
         return self.num_tokens

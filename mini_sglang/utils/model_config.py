@@ -17,4 +17,5 @@ class ModelConfig:
         self.num_heads = self.hf_config.num_attention_heads
         self.num_kv_heads = self.hf_config.num_key_value_heads
 
-        self.context_len = self.hf_config.max_position_embeddings
+        self.max_context_len = self.hf_config.max_position_embeddings
+        self.kv_cache_dtype = self.hf_config.torch_dtype

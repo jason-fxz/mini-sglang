@@ -135,9 +135,9 @@ class MHAKVPool(KVCachePool):
         cache_k: torch.Tensor,
         cache_v: torch.Tensor,
     ):
-        layer_id = layer.id
-        self.k_buffer[layer_id][loc] = cache_k
-        self.v_buffer[layer_id][loc] = cache_v
+        layer_id = layer.layer_id
+        self.k_buffer[layer_id][loc] = cache_k.view(-1, self.head_num, self.head_dim)
+        self.v_buffer[layer_id][loc] = cache_v.view(-1, self.head_num, self.head_dim)
 
     def get_value_buffer(self, layer_id: int):
         return self.v_buffer[layer_id]
@@ -169,7 +169,6 @@ class PageAllocator:
         Args:
             page_num (int): Total number of pages in the memory pool.
             page_size (int): Size of each page.
-            dtype (torch.dtype): Data type for the memory pool.
             device (str): Device to store the memory pool.
         """
         self.page_num = page_num

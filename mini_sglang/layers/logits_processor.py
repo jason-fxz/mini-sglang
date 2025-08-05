@@ -23,6 +23,8 @@ class LogitsProcessor(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.tp_size = dist.get_world_size()
+        self.tp_rank = dist.get_rank()
 
     def forward(
         self,
@@ -44,13 +46,17 @@ class LogitsProcessor(nn.Module):
 
         if batch.forward_mode.is_extend():
             # for EXTEND mode, only compute the last token's logits
-            last_indices = batch.cu_seqlens_q[1:] - 1
+            last_indices = torch.cumsum(batch.input_seq_lens, dim=0, dtype=torch.int32)
+            last_indices.add_(-1)
             hidden_states = hidden_states[last_indices].contiguous()
 
         # now hidden_states shape: [batch_size, hidden_size]
 
         # compute logits
-        logits = F.linear(hidden_states, lm_head.weight, lm_head.bias)
+        if hasattr(lm_head, "bias") and lm_head.bias is not None:
+            logits = F.linear(hidden_states, lm_head.weight, lm_head.bias)
+        else:
+            logits = F.linear(hidden_states, lm_head.weight)
 
         if self.tp_size > 1:
             all_logits = (
