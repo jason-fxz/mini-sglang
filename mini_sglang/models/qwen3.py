@@ -82,10 +82,10 @@ class Qwen3Attention(nn.Module):
     ) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q_by_head = q.view(-1, self.num_heads, self.head_dim)
+        q_by_head = q.reshape(-1, self.head_dim)
         q_by_head = self.q_norm(q_by_head)
         q = q_by_head.view(q.shape)
-        k_by_head = k.view(-1, self.num_kv_heads, self.head_dim)
+        k_by_head = k.reshape(-1, self.head_dim)
         k_by_head = self.k_norm(k_by_head)
         k = k_by_head.view(k.shape)
         q, k = self.rotary_emb(positions, q, k)
@@ -198,7 +198,7 @@ class Qwen3Model(nn.Module):
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             hidden_states, residual = layer(positions, hidden_states, batch, residual)
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states

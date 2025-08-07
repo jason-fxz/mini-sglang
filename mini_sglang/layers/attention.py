@@ -28,4 +28,6 @@ class Attention(nn.Module):
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, batch: BatchInfo
     ):
+        k = k.view(-1, self.num_kv_heads, self.head_dim)
+        v = v.view(-1, self.num_kv_heads, self.head_dim)
         return batch.attn_backend.forward(q=q, k=k, v=v, layer=self, batch=batch)

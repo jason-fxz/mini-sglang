@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 import torch
+from sgl_kernel import apply_rope_with_cos_sin_cache_inplace
 from torch import nn
 
 
@@ -15,10 +16,10 @@ def apply_rotary_emb(
     """
     cos = cos.unsqueeze(-2).to(x.dtype)
     sin = sin.unsqueeze(-2).to(x.dtype)
-    x1, x2 = torch.chunk(x.to(torch.float32), 2, dim=-1)
+    x1, x2 = torch.chunk(x, 2, dim=-1)
     y1 = x1 * cos - x2 * sin
     y2 = x1 * sin + x2 * cos
-    return torch.cat((y1, y2), dim=-1).to(x.dtype)
+    return torch.cat((y1, y2), dim=-1)
 
 
 class RotaryEmbedding(nn.Module):
@@ -54,22 +55,33 @@ class RotaryEmbedding(nn.Module):
         cache = torch.cat((cos, sin), dim=-1)
         self.register_buffer("cos_sin_cache", cache, persistent=False)
 
-    @torch.compile
+    # @torch.compile
     def forward(
         self,
         positions: torch.Tensor,
         query: torch.Tensor,
         key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        num_tokens = positions.size(0)
-        cos_sin = self.cos_sin_cache[positions]
-        cos, sin = cos_sin.chunk(2, dim=-1)
-        query_shape = query.shape
-        query = query.view(num_tokens, -1, self.head_size)
-        query = apply_rotary_emb(query, cos, sin).view(query_shape)
-        key_shape = key.shape
-        key = key.view(num_tokens, -1, self.head_size)
-        key = apply_rotary_emb(key, cos, sin).view(key_shape)
+        if self.head_size in [64, 128, 256, 512]:
+            apply_rope_with_cos_sin_cache_inplace(
+                positions=positions,
+                query=query,
+                key=key,
+                head_size=self.head_size,
+                cos_sin_cache=self.cos_sin_cache,
+                is_neox=True,
+            )
+        else:
+            raise RuntimeError("FUCK")
+            num_tokens = positions.size(0)
+            cos_sin = self.cos_sin_cache[positions]
+            cos, sin = cos_sin.chunk(2, dim=-1)
+            query_shape = query.shape
+            query = query.view(num_tokens, -1, self.head_size)
+            query = apply_rotary_emb(query, cos, sin).view(query_shape)
+            key_shape = key.shape
+            key = key.view(num_tokens, -1, self.head_size)
+            key = apply_rotary_emb(key, cos, sin).view(key_shape)
         return query, key
 
 

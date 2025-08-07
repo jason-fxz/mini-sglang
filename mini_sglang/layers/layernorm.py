@@ -2,6 +2,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from sgl_kernel import fused_add_rmsnorm, rmsnorm
 from torch import nn
 
 
@@ -17,6 +18,12 @@ class RMSNorm(nn.Module):
     def forward(
         self, x: torch.Tensor, residual: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        if residual is not None:
+            fused_add_rmsnorm(x, residual, self.weight.data, self.eps)
+            return x, residual
+        out = rmsnorm(x, self.weight.data, self.eps)
+        return out
+
         orig_dtype = x.dtype
         x = x.to(torch.float32)
         if residual is not None:
