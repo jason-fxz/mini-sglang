@@ -27,7 +27,6 @@ class Req:
         self.req_id = next(Req.counter)
         self.status = ReqStatus.WAITING
         self.token_ids = copy(token_ids)  # upd
-        self.last_token_id = token_ids[-1] if token_ids else None  # upd
         self.max_tokens = sampling_params.max_tokens
         self.num_prompt_tokens = len(token_ids)
         self.ignore_eos = sampling_params.ignore_eos
@@ -37,6 +36,10 @@ class Req:
         # prefix info
         # The indices to kv cache for shared prefix
         self.prefix_indices: torch.tensor = torch.tensor([], dtype=torch.int32)  # upd
+
+    @property
+    def last_token_id(self) -> int:
+        return self.token_ids[-1] if self.token_ids else None
 
     @property
     def num_tokens(self) -> int:

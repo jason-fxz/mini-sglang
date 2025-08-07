@@ -57,7 +57,8 @@ class ModelRunner:
         free_size, total_size = torch.cuda.mem_get_info(
             self.gpu_id
         )  # free memory in bytes
-        used_size = total_size - free_size
+        # used_size = total_size - free_size
+        used_size = torch.cuda.memory_allocated(self.gpu_id)
         num_kv_heads = self.model_config.num_kv_heads // self.tp_size
 
         cell_size = (
@@ -160,8 +161,7 @@ class ModelRunner:
 
         # Update the batch info with the output ids
         for i, req in enumerate(batch.reqs):
-            req.token_ids.append(output_ids[i])
-            req.last_token_id = output_ids[i].item()
+            req.token_ids.append(output_ids[i].item())
             req.prefix_indices = self.req_to_token_pool.req_to_token[req.req_pool_idx][
                 : len(req) - 1
             ]
@@ -182,8 +182,7 @@ class ModelRunner:
 
         # Update the batch info with the output ids
         for i, req in enumerate(batch.reqs):
-            req.token_ids.append(output_ids[i])
-            req.last_token_id = output_ids[i].item()
+            req.token_ids.append(output_ids[i].item())
             req.prefix_indices = self.req_to_token_pool.req_to_token[req.req_pool_idx][
                 : len(req) - 1
             ]
