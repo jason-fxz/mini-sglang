@@ -158,6 +158,7 @@ class BatchInfo:
                 (req_pool_indices[i], slice(prefix_lens[i], seq_lens[i])),
                 out_cache_loc[pos : pos + extend_lens[i]],
             )
+            pos += extend_lens[i]
         # Set attributes
         self.input_ids = input_ids_tensor
         self.req_pool_indices = req_pool_indices_tensor
