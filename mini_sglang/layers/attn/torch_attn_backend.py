@@ -246,7 +246,7 @@ class TorchNativeAttnBackend(AttentionBackend):
             batch.seq_lens,
             scaling=layer.scale,
             enable_gqa=use_gqa,
-            causal=True,
+            causal=False,
         )
 
         return o
