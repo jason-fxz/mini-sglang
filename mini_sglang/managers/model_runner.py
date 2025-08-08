@@ -85,14 +85,17 @@ class ModelRunner:
                 TorchNativeAttnBackend,
             )
 
+            logger.info("Using Torch native attention backend")
             self.attn_backend = TorchNativeAttnBackend(self)
         elif self.server_args.attention_backend == "fa3":
             from mini_sglang.layers.attn.fa3_attn_backend import FlashAttn3Backend
 
+            logger.info("Using FlashAttention 3 backend")
             self.attn_backend = FlashAttn3Backend(self)
         elif self.server_args.attention_backend == "fa2":
             from mini_sglang.layers.attn.fa2_attn_backend import FlashAttn2Backend
 
+            logger.info("Using FlashAttention 2 backend")
             self.attn_backend = FlashAttn2Backend(self)
         else:
             raise ValueError(
@@ -134,12 +137,14 @@ class ModelRunner:
     def forward_extend(self, batch: BatchInfo) -> LogitsProcessorOutput:
         assert batch.forward_mode.is_extend()
         batch.attn_backend = self.attn_backend
+        batch.attn_backend.init_forward_metadata(batch)
 
         return self.model.forward(batch.input_ids, batch.positions, batch)
 
     def forward_decode(self, batch: BatchInfo) -> LogitsProcessorOutput:
         assert batch.forward_mode.is_decode()
         batch.attn_backend = self.attn_backend
+        batch.attn_backend.init_forward_metadata(batch)
 
         return self.model.forward(batch.input_ids, batch.positions, batch)
 

@@ -1,8 +1,19 @@
+import logging
 from functools import lru_cache
 
 import torch
-from sgl_kernel import apply_rope_with_cos_sin_cache_inplace
 from torch import nn
+
+logger = logging.getLogger(__name__)
+
+sgl_kernel_available = False
+
+try:
+    from sgl_kernel import apply_rope_with_cos_sin_cache_inplace
+
+    sgl_kernel_available = True
+except ImportError:
+    logger.warning("sgl_kernel is not available, using pure PyTorch implementation.")
 
 
 def apply_rotary_emb(
@@ -62,7 +73,7 @@ class RotaryEmbedding(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.head_size in [64, 128, 256, 512]:
+        if sgl_kernel_available and (self.head_size in [64, 128, 256, 512]):
             apply_rope_with_cos_sin_cache_inplace(
                 positions=positions,
                 query=query,
@@ -72,7 +83,6 @@ class RotaryEmbedding(nn.Module):
                 is_neox=True,
             )
         else:
-            raise RuntimeError("FUCK")
             num_tokens = positions.size(0)
             cos_sin = self.cos_sin_cache[positions]
             cos, sin = cos_sin.chunk(2, dim=-1)

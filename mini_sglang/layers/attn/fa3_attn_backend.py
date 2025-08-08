@@ -11,11 +11,9 @@ from mini_sglang.managers.batch_info import BatchInfo
 from mini_sglang.managers.model_runner import ModelRunner
 
 try:
-    flash_attn_version = version("flash-attn")
-    assert flash_attn_version.startswith("3."), "flash-attn version must be 3.x.x"
-    from flash_attn import flash_attn_with_kvcache
+    from mini_sglang.layers.attn.slg_fa3 import flash_attn_with_kvcache
 except PackageNotFoundError:
-    assert False, "flash-attn package is required for FA3AttentionBackend"
+    raise ImportError("flash-attn package is required for FA3AttentionBackend")
 
 
 class FlashAttn3Metadata:
@@ -39,6 +37,7 @@ class FlashAttn3Backend(AttentionBackend):
         self.device = model_runner.device
         self.req_to_token_pool = model_runner.req_to_token_pool
         self.kv_cache_pool = model_runner.kv_cache_pool
+        self.page_size = model_runner.page_size
 
     # FIXME: support page_size > 1
     def init_forward_metadata(self, batch: BatchInfo):
@@ -55,9 +54,17 @@ class FlashAttn3Backend(AttentionBackend):
         )
 
         # FA3 supports any page_size
-        metadata.page_table = self.req_to_token_pool.req_to_page[
-            batch.req_pool_indices, : metadata.max_seqlen_k
-        ]
+        if self.page_size == 1:
+            metadata.page_table = self.req_to_token_pool.req_to_token[
+                batch.req_pool_indices, : metadata.max_seqlen_k
+            ]
+        else:
+            max_num_page = (
+                metadata.max_seqlen_k + self.page_size - 1
+            ) // self.page_size
+            metadata.page_table = self.req_to_token_pool.req_to_page[
+                batch.req_pool_indices, :max_num_page
+            ]
 
         if batch.forward_mode.is_extend():
             # Get sequence lengths for query
@@ -94,8 +101,12 @@ class FlashAttn3Backend(AttentionBackend):
         # FIXME : support page_size > 1
         o = flash_attn_with_kvcache(
             q=q.contiguous().view(-1, layer.num_heads, layer.head_dim),
-            k_cache=k_cache.unsqueeze(1),
-            v_cache=v_cache.unsqueeze(1),
+            k_cache=k_cache.view(
+                -1, self.page_size, layer.num_kv_heads, layer.head_dim
+            ),
+            v_cache=v_cache.view(
+                -1, self.page_size, layer.num_kv_heads, layer.head_dim
+            ),
             page_table=metadata.page_table,
             cache_seqlens=metadata.cache_seqlens_int32,
             cu_seqlens_q=metadata.cu_seqlens_q,
@@ -126,8 +137,12 @@ class FlashAttn3Backend(AttentionBackend):
         # FIXME : support page_size > 1
         o = flash_attn_with_kvcache(
             q=q.contiguous().view(-1, layer.num_heads, layer.head_dim),
-            k_cache=k_cache.unsqueeze(1),
-            v_cache=v_cache.unsqueeze(1),
+            k_cache=k_cache.view(
+                -1, self.page_size, layer.num_kv_heads, layer.head_dim
+            ),
+            v_cache=v_cache.view(
+                -1, self.page_size, layer.num_kv_heads, layer.head_dim
+            ),
             page_table=metadata.page_table,
             cache_seqlens=metadata.cache_seqlens_int32,
             cu_seqlens_q=metadata.cu_seqlens_q,

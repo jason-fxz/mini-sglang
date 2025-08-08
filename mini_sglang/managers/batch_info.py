@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 import torch
 
+from mini_sglang.managers.req_info import Req, ReqStatus
+
 if TYPE_CHECKING:
     from mini_sglang.layers.attn.attn_backend import AttentionBackend
-    from mini_sglang.managers.req_info import Req
     from mini_sglang.mem_cache.req2token import ReqToTokenPool
     from mini_sglang.mem_cache.token2kv import KVCachePool, PageAllocator
 
@@ -26,6 +27,12 @@ class ForwardMode(IntEnum):
 
     def is_decode(self) -> bool:
         return self == ForwardMode.DECODE
+
+    def __repr__(self):
+        return self.name
+
+    def __str__(self):
+        return self.name
 
 
 @dataclasses.dataclass
@@ -114,6 +121,7 @@ class BatchInfo:
         req_pool_indices = self.req_to_token_pool.alloc(bs)
         for i, req in enumerate(self.reqs):
             req.req_pool_idx = req_pool_indices[i]
+            req.status = ReqStatus.RUNNING
 
         # Init tensors
         reqs = self.reqs
