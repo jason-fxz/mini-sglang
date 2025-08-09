@@ -39,7 +39,6 @@ class FlashAttn3Backend(AttentionBackend):
         self.kv_cache_pool = model_runner.kv_cache_pool
         self.page_size = model_runner.page_size
 
-    # FIXME: support page_size > 1
     def init_forward_metadata(self, batch: BatchInfo):
         metadata = FlashAttn3Metadata()
         batch_size = batch.batch_size
@@ -98,7 +97,6 @@ class FlashAttn3Backend(AttentionBackend):
         metadata = self.forward_metadata
 
         k_cache, v_cache = self.kv_cache_pool.get_kv_buffer(layer.layer_id)
-        # FIXME : support page_size > 1
         o = flash_attn_with_kvcache(
             q=q.contiguous().view(-1, layer.num_heads, layer.head_dim),
             k_cache=k_cache.view(
@@ -134,7 +132,6 @@ class FlashAttn3Backend(AttentionBackend):
         metadata = self.forward_metadata
 
         k_cache, v_cache = self.kv_cache_pool.get_kv_buffer(layer.layer_id)
-        # FIXME : support page_size > 1
         o = flash_attn_with_kvcache(
             q=q.contiguous().view(-1, layer.num_heads, layer.head_dim),
             k_cache=k_cache.view(

@@ -32,18 +32,21 @@ class ReqToTokenPool:
         page_size: int,
         device: str,
     ):
-        assert size % page_size == 0, "Size must be a multiple of page_size."
+        assert (
+            max_tokens % page_size == 0
+        ), "max_tokens must be a multiple of page_size."
         self.size = size
         self.max_tokens = max_tokens
         self.page_size = page_size
-        self.max_page_num = (max_tokens + page_size - 1) // page_size
+        self.max_page_num = max_tokens // page_size
         self.device = device
         self.req_to_token = torch.zeros(
             (size, max_tokens), dtype=torch.int32, device=device
         )
-        # self.req_to_page = torch.zeros(
-        #     (size, self.max_page_num), dtype=torch.int32, device=device
-        # )
+        if page_size > 1:
+            self.req_to_page = torch.zeros(
+                (size, self.max_page_num), dtype=torch.int32, device=device
+            )
 
         self.free_slots = list(range(size))
 

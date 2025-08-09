@@ -149,24 +149,57 @@ class BatchInfo:
             self.device, non_blocking=True
         )
 
-        # Alloc kv cache
         if self.page_allocator.page_size == 1:
+            # Alloc kv cache
             out_cache_loc = self.page_allocator.alloc(extend_num_tokens).to(
                 self.device, non_blocking=True
             )
-            # out_cache_loc = torch.tensor(out_cache_loc, dtype=torch.int32).to(self.device, non_blocking=True)
-        else:
-            # TODO: support page size > 1
-            raise RuntimeError("Currently only support page size of 1 for kv cache")
 
-        # Write to req2token pool
-        pos = 0
-        for i in range(bs):
-            self.req_to_token_pool.write(
-                (req_pool_indices[i], slice(prefix_lens[i], seq_lens[i])),
-                out_cache_loc[pos : pos + extend_lens[i]],
+            # Write to req2token pool
+            pos = 0
+            for i in range(bs):
+                self.req_to_token_pool.write(
+                    (req_pool_indices[i], slice(prefix_lens[i], seq_lens[i])),
+                    out_cache_loc[pos : pos + extend_lens[i]],
+                )
+                pos += extend_lens[i]
+        else:
+            page_size = self.page_allocator.page_size
+            num_pages = [
+                (tokens + page_size - 1) // page_size for tokens in extend_lens
+            ]
+            page_loc = self.page_allocator.alloc(sum(num_pages))
+            # Expand each page id to its token locations: [pid*page_size, (pid+1)*page_size)
+            expanded = page_loc.unsqueeze(1) * page_size + torch.arange(
+                page_size, device=page_loc.device
             )
-            pos += extend_lens[i]
+            token_loc = expanded.reshape(-1).to(torch.int32)
+
+            pos_page, pos_token = 0, 0
+            out_cache_loc = torch.empty(
+                extend_num_tokens, dtype=torch.int32, device="cpu"
+            )
+            for i in range(bs):
+                assert (
+                    prefix_lens[i] % page_size == 0
+                ), f"Prefix length {prefix_lens[i]} is not page-aligned"
+                start_page = prefix_lens[i] // page_size
+                self.req_to_token_pool.req_to_page[
+                    req_pool_indices[i], start_page : start_page + num_pages[i]
+                ] = page_loc[pos_page : pos_page + num_pages[i]]
+                self.req_to_token_pool.req_to_token[
+                    req_pool_indices[i],
+                    prefix_lens[i] : prefix_lens[i] + extend_lens[i],
+                ] = token_loc[
+                    pos_page * page_size : pos_page * page_size + extend_lens[i]
+                ]
+                out_cache_loc[pos_token : pos_token + extend_lens[i]] = token_loc[
+                    pos_page * page_size : pos_page * page_size + extend_lens[i]
+                ]
+                pos_page += num_pages[i]
+                pos_token += extend_lens[i]
+            out_cache_loc = out_cache_loc.to(self.device, non_blocking=True)
+
         # Set attributes
         self.input_ids = input_ids_tensor
         self.req_pool_indices = req_pool_indices_tensor
@@ -186,6 +219,7 @@ class BatchInfo:
         reqs = self.reqs
         input_ids = [r.token_ids[len(r.prefix_indices) :] for r in reqs]
         locs = self.seq_lens.clone()
+        seq_lens_old = locs.tolist()
         self.seq_lens.add_(1)
         self.prefix_seq_lens = None
         self.input_seq_lens = None
@@ -199,13 +233,34 @@ class BatchInfo:
             out_cache_loc = self.page_allocator.alloc(bs).to(
                 self.device, non_blocking=True
             )
-            # out_cache_loc = torch.tensor(out_cache_loc, dtype=torch.int32).to(self.device, non_blocking=True)
         else:
-            # TODO: support page size > 1
-            raise RuntimeError("Currently only support page size of 1 for kv cache")
+            page_size = self.page_allocator.page_size
+            num_pages = sum(1 for l in seq_lens_old if l % page_size == 0)
+            page_loc = self.page_allocator.alloc(num_pages)
+            # Expand each page id to its token locations: [pid*page_size, (pid+1)*page_size)
+            pos_page = 0
+            out_cache_loc = []
+            for i in range(bs):
+                if seq_lens_old[i] % page_size == 0:
+                    # new page
+                    self.req_to_token_pool.req_to_page[
+                        self.reqs[i].req_pool_idx, seq_lens_old[i] // page_size
+                    ] = page_loc[pos_page]
+                    out_cache_loc.append(page_loc[pos_page] * page_size)
+                    pos_page += 1
+                else:
+                    out_cache_loc.append(
+                        self.req_to_token_pool.req_to_token[
+                            self.reqs[i].req_pool_idx, seq_lens_old[i] - 1
+                        ]
+                        + 1
+                    )
+            out_cache_loc = torch.tensor(out_cache_loc, dtype=torch.int32).to(
+                self.device, non_blocking=True
+            )
 
         # Write to req2token pool
         self.out_cache_loc = out_cache_loc
         self.req_to_token_pool.write((self.req_pool_indices, locs), self.out_cache_loc)
-        self.positions = locs
+        self.positions = locs.to(self.device, non_blocking=True)
         self.input_ids = input_ids_tensor

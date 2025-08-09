@@ -4,6 +4,7 @@ import time
 
 import pytest
 from torch import distributed as dist
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from mini_sglang.managers.batch_info import BatchInfo
@@ -52,7 +53,12 @@ def print_batch_info(batch: BatchInfo):
 
 def test_one_batch():
     model_path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
-    server_args = ServerArgs(model=model_path)
+    server_args = ServerArgs(
+        model=model_path,
+        attention_backend="fa3",
+        gpu_memory_utilization=0.45,
+        page_size=1,
+    )
     assert server_args.tp == 1, "Tensor parallelism is not supported in this script."
 
     model_config = ModelConfig(model_path)
@@ -71,19 +77,33 @@ def test_one_batch():
     assert model_runner is not None
     assert tokenizer is not None
 
-    sampling_params = SamplingParams(1.0, 64, eos_token_id=tokenizer.eos_token_id)
+    sampling_params = SamplingParams(0.6, 64, eos_token_id=tokenizer.eos_token_id)
 
     # Prepare a batch of input data
-    input_texts = [
-        "Hello, how are you?",
-        "What is the capital of France?",
-        "Tell me a joke.",
+    prompts = [
+        "introduce yourself",
+        "list all prime numbers within 100",
     ]
+    prompts = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+        for prompt in prompts
+    ]
+    print(prompts)
     reqs = []
-    for input_text in input_texts:
-        input_ids = tokenizer.encode(input_text)
+    for prompt in prompts:
+        input_ids = tokenizer.encode(prompt)
         req = Req(input_ids, sampling_params)
         reqs.append(req)
+
+    # inputs ids:
+    print("Input IDs:")
+    for req in reqs:
+        print(req.token_ids)
 
     batch = BatchInfo.init_new(
         reqs=reqs,
@@ -97,19 +117,20 @@ def test_one_batch():
     batch.prepare_for_extend()
     logits = model_runner.forward_extend(batch)
     model_runner.process_extend_result(batch, logits)
-    print_batch_info(batch)
+    # print_batch_info(batch)
 
-    for i in range(10):
+    for i in tqdm(range(1024), desc="Decoding", unit="step"):
         batch.prepare_for_decode()
         logits = model_runner.forward_decode(batch)
         model_runner.process_decode_result(batch, logits)
-        print_batch_info(batch)
+        # print_batch_info(batch)
+
     # Detokenize the output
     output_texts = []
     for req in batch.reqs:
-        output_text = tokenizer.decode(req.token_ids, skip_special_tokens=True)
+        output_text = tokenizer.decode(req.token_ids, skip_special_tokens=False)
         output_texts.append(output_text)
 
     print("Output texts:")
-    for text in output_texts:
-        print(text)
+    for i, text in enumerate(output_texts):
+        print(f"Prompt {i+1}: {text!r}")
