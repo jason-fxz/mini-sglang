@@ -101,6 +101,9 @@ class BatchInfo:
             device=req_to_token_pool.device,
         )
 
+    def is_empty(self):
+        return len(self.reqs) == 0
+
     @property
     def batch_size(self) -> int:
         return len(self.reqs)
@@ -264,3 +267,38 @@ class BatchInfo:
         self.req_to_token_pool.write((self.req_pool_indices, locs), self.out_cache_loc)
         self.positions = locs.to(self.device, non_blocking=True)
         self.input_ids = input_ids_tensor
+
+    def merge_batch(self, other: BatchInfo):
+        """
+        Merge another batch into this batch.
+        """
+        assert (
+            self.forward_mode == other.forward_mode
+        ), "Cannot merge batches with different forward modes."
+
+        self.reqs.extend(other.reqs)
+        self.input_ids = torch.cat([self.input_ids, other.input_ids], dim=0)
+        self.positions = torch.cat([self.positions, other.positions], dim=0)
+        self.seq_lens = torch.cat([self.seq_lens, other.seq_lens], dim=0)
+        self.input_seq_lens = torch.cat(
+            [self.input_seq_lens, other.input_seq_lens], dim=0
+        )
+        self.prefix_seq_lens = torch.cat(
+            [self.prefix_seq_lens, other.prefix_seq_lens], dim=0
+        )
+        self.req_pool_indices = torch.cat(
+            [self.req_pool_indices, other.req_pool_indices], dim=0
+        )
+        self.out_cache_loc = torch.cat([self.out_cache_loc, other.out_cache_loc], dim=0)
+
+    def filter_req(self, keep_indices: List[int]):
+        """
+        Filter the requests in the batch based on the given indices to keep.
+
+        call this method before prepare_for_xxx!!
+        """
+
+        self.reqs = [self.reqs[i] for i in keep_indices]
+
+        # Tensors need to be updated
+        self.seq_lens = self.seq_lens[keep_indices]

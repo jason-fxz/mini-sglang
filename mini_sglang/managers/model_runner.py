@@ -25,10 +25,10 @@ class ModelRunner:
         gpu_id: int,
         tp_rank: int,
         tp_size: int,
+        req_to_token_pool: Optional[ReqToTokenPool] = None,
+        page_allocator: Optional[PageAllocator] = None,
+        kv_cache_pool: Optional[KVCachePool] = None,
         sampling_params: Optional[SamplingParams] = None,
-        # req_to_token_pool: ReqToTokenPool,
-        # page_allocator: PageAllocator,
-        # kv_cache_pool: KVCachePool,
     ):
         self.device = server_args.device
         self.gpu_id = gpu_id
@@ -42,7 +42,23 @@ class ModelRunner:
         torch.set_default_dtype(model_config.hf_config.torch_dtype)
         torch.set_default_device(self.device)
         self.model = load_model(model_config)
-        self.init_memory_pool(server_args.max_num_reqs, model_config.max_context_len)
+        if (
+            page_allocator is None
+            and req_to_token_pool is None
+            and kv_cache_pool is None
+        ):
+            self.init_memory_pool(
+                server_args.max_num_reqs, model_config.max_context_len
+            )
+        else:
+            assert (
+                page_allocator is not None
+                and req_to_token_pool is not None
+                and kv_cache_pool is not None
+            )
+            self.page_allocator = page_allocator
+            self.req_to_token_pool = req_to_token_pool
+            self.kv_cache_pool = kv_cache_pool
         torch.set_default_device("cpu")
 
         self.sampler = Sampler()
@@ -52,6 +68,29 @@ class ModelRunner:
 
         self.attn_backend = None
         self.init_attn_backend()
+
+    def init_attn_backend(self):
+        if self.server_args.attention_backend == "torch":
+            from mini_sglang.layers.attn.torch_attn_backend import (
+                TorchNativeAttnBackend,
+            )
+
+            logger.info("Using Torch native attention backend")
+            self.attn_backend = TorchNativeAttnBackend(self)
+        elif self.server_args.attention_backend == "fa3":
+            from mini_sglang.layers.attn.fa3_attn_backend import FlashAttn3Backend
+
+            logger.info("Using FlashAttention 3 backend")
+            self.attn_backend = FlashAttn3Backend(self)
+        elif self.server_args.attention_backend == "fa2":
+            from mini_sglang.layers.attn.fa2_attn_backend import FlashAttn2Backend
+
+            logger.info("Using FlashAttention 2 backend")
+            self.attn_backend = FlashAttn2Backend(self)
+        else:
+            raise ValueError(
+                f"Unsupported attention backend: {self.server_args.attention_backend}"
+            )
 
     def _calc_max_num_token(self) -> Tuple[int, int]:
         free_size, total_size = torch.cuda.mem_get_info(
@@ -78,29 +117,6 @@ class ModelRunner:
         num_kvcache_tokens = num_kvcache_pages * self.page_size
 
         return num_kvcache_pages, num_kvcache_tokens
-
-    def init_attn_backend(self):
-        if self.server_args.attention_backend == "torch":
-            from mini_sglang.layers.attn.torch_attn_backend import (
-                TorchNativeAttnBackend,
-            )
-
-            logger.info("Using Torch native attention backend")
-            self.attn_backend = TorchNativeAttnBackend(self)
-        elif self.server_args.attention_backend == "fa3":
-            from mini_sglang.layers.attn.fa3_attn_backend import FlashAttn3Backend
-
-            logger.info("Using FlashAttention 3 backend")
-            self.attn_backend = FlashAttn3Backend(self)
-        elif self.server_args.attention_backend == "fa2":
-            from mini_sglang.layers.attn.fa2_attn_backend import FlashAttn2Backend
-
-            logger.info("Using FlashAttention 2 backend")
-            self.attn_backend = FlashAttn2Backend(self)
-        else:
-            raise ValueError(
-                f"Unsupported attention backend: {self.server_args.attention_backend}"
-            )
 
     def init_memory_pool(
         self,
@@ -147,6 +163,17 @@ class ModelRunner:
         batch.attn_backend.init_forward_metadata(batch)
 
         return self.model.forward(batch.input_ids, batch.positions, batch)
+
+    def forward_generate(self, batch: BatchInfo) -> LogitsProcessorOutput:
+        if batch.forward_mode.is_extend():
+            return self.forward_extend(batch)
+        elif batch.forward_mode.is_decode():
+            return self.forward_decode(batch)
+        else:
+            raise ValueError(
+                f"Unsupported forward mode: {batch.forward_mode}. "
+                "Only extend and decode modes are supported."
+            )
 
     def process_extend_result(self, batch: BatchInfo, logits: LogitsProcessorOutput):
         """
