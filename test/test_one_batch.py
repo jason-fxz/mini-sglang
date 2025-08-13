@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+import uuid
 
 import pytest
 from torch import distributed as dist
@@ -97,7 +98,7 @@ def test_one_batch():
     reqs = []
     for prompt in prompts:
         input_ids = tokenizer.encode(prompt)
-        req = Req(input_ids, sampling_params)
+        req = Req(uuid.uuid4(), input_ids, sampling_params)
         reqs.append(req)
 
     # inputs ids:
