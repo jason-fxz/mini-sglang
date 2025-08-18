@@ -11,7 +11,7 @@ from mini_sglang.managers.batch_info import BatchInfo
 from mini_sglang.managers.model_runner import ModelRunner
 
 try:
-    from mini_sglang.layers.attn.slg_fa3 import flash_attn_with_kvcache
+    from mini_sglang.layers.attn.sgl_fa3 import flash_attn_with_kvcache
 except PackageNotFoundError:
     raise ImportError("flash-attn package is required for FA3AttentionBackend")
 
