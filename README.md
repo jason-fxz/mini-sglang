@@ -14,17 +14,17 @@ A lightweight SGLang implementation built from scratch.
 
   - [x] Qwen3 model structure
   - [x] Model Runner
-  - [ ] Scheduler
-  - [ ] Tokenizer-Detokenizer
+  - [x] Scheduler
+  - [x] Tokenizer-Detokenizer
 
 - Scheduling
-  - [ ] FIFO
+  - [x] FIFO
   - [ ] Cache-Aware
   - [ ] chunked prefill
 
 - KVcache Management
-  - [ ] page size == 1
-  - [ ] page size > 1
+  - [x] page size == 1
+  - [x] page size > 1
   - [ ] Radix Attention
 
 - API support
