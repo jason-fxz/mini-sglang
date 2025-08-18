@@ -19,15 +19,16 @@ class ServerArgs:
 
     max_num_reqs: int = 1024
 
-    schedule_policy: str = "fcfs"
+    scheduler_policy: str = "fcfs"
 
     max_running_bs: int = 128
 
-    tp: int = 1
+    tp_size: int = 1
     device: str = "cuda"
     nccl_port: int = None
 
     gpu_memory_utilization: float = 0.9
+    log_level: str = "INFO"
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
@@ -54,9 +55,9 @@ class ServerArgs:
             help="Attention backend to use.",
         )
         parser.add_argument(
-            "--tp",
+            "--tp-size",
             type=int,
-            default=ServerArgs.tp,
+            default=ServerArgs.tp_size,
             help="Tensor parallelism degree.",
         )
         parser.add_argument(
@@ -89,6 +90,13 @@ class ServerArgs:
             type=int,
             default=ServerArgs.max_running_bs,
             help="Maximum batch size for running requests.",
+        )
+        parser.add_argument(
+            "--log_level",
+            type=str,
+            default=ServerArgs.log_level,
+            choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            help="Logging level for the server.",
         )
 
 

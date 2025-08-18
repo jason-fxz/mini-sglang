@@ -1,8 +1,14 @@
+import logging
+import os
+import traceback
 from typing import List, Optional, Tuple
 
+import setproctitle
 import torch
 import zmq
+from torch import distributed as dist
 
+from mini_sglang.layers.sampler import Sampler
 from mini_sglang.managers.batch_info import BatchInfo, ForwardMode
 from mini_sglang.managers.io_struct import (
     BatchTokenIDOut,
@@ -16,7 +22,13 @@ from mini_sglang.managers.server_args import PortArgs, ServerArgs
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
 from mini_sglang.utils.model_config import ModelConfig
-from mini_sglang.utils.utils import TypeBasedDispatcher, get_zmq_socket
+from mini_sglang.utils.utils import (
+    TypeBasedDispatcher,
+    configure_logger,
+    get_zmq_socket,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class Scheduler:
@@ -30,7 +42,7 @@ class Scheduler:
         self.server_args = server_args
         self.port_args = port_args
         self.tp_rank = tp_rank
-        self.tp_size = server_args.tp
+        self.tp_size = server_args.tp_size
         self.gpu_id = gpu_id
 
         self.page_size = server_args.page_size
@@ -39,13 +51,16 @@ class Scheduler:
         self.forward_ct = 0
 
         # IPC init
-        context = zmq.asyncio.Context(2)
+        context = zmq.Context(2)
         self.recv_from_tokenizer = get_zmq_socket(
-            context, zmq.PULL, port_args.scheduler_input_ipc, True
+            context, zmq.PULL, port_args.scheduler_input_ipc, False
         )
         self.send_to_detokenizer = get_zmq_socket(
-            context, zmq.PUSH, port_args.detokenizer_input_ipc, True
+            context, zmq.PUSH, port_args.detokenizer_input_ipc, False
         )
+
+        # init dist group
+        self.init_tp_group(tp_rank, self.tp_size)
 
         # init memory pool
         self.model_config = ModelConfig(server_args.model)
@@ -64,6 +79,8 @@ class Scheduler:
             page_allocator=self.page_allocator,
             kv_cache_pool=self.kv_cache_pool,
         )
+
+        self.sampler = Sampler()
 
         # init waiting queue
         self.waiting_queue: List[Req] = []
@@ -85,6 +102,11 @@ class Scheduler:
         # scheduler policy
         self.scheduler_policy = server_args.scheduler_policy
         self.policy = SchedulerPolicy(self.scheduler_policy)
+
+    def init_tp_group(self, tp_rank: int, tp_size: int):
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = str(self.port_args.nccl_port)
+        dist.init_process_group(backend="nccl", rank=tp_rank, world_size=tp_size)
 
     def calc_max_num_token(self) -> Tuple[int, int]:
         free_size, total_size = torch.cuda.mem_get_info(
@@ -169,6 +191,8 @@ class Scheduler:
                 break
             recv_reqs.append(recv_req)
 
+        if len(recv_reqs) > 0:
+            logger.debug(f"Received {len(recv_reqs)} requests from tokenizer.")
         return recv_reqs
 
     def process_input_requests(self, recv_reqs: List):
@@ -185,7 +209,7 @@ class Scheduler:
 
         for req in self.waiting_queue:
             # TODO schedule policy
-            if self.running_batch >= self.server_args.max_running_bs:
+            if self.running_batch.batch_size >= self.server_args.max_running_bs:
                 break
 
             can_run_reqs.append(req)
@@ -214,11 +238,11 @@ class Scheduler:
 
     def get_next_batch_to_run(self):
         # merge last prefill batch with current running batch
-        if self.last_batch is not None:
+        if self.last_batch and self.last_batch.forward_mode.is_extend():
             if self.running_batch.is_empty():
                 self.running_batch = self.last_batch
             else:
-                self.running_batch.merge(self.last_batch)
+                self.running_batch.merge_batch(self.last_batch)
 
         new_batch = self.get_new_batch_prefill()
 
@@ -277,6 +301,8 @@ class Scheduler:
         batch.filter_reqs(finished_reqs_indices)
 
     def event_loop_normal(self):
+        logger.info("Scheduler event loop started.")
+        # print("FUCK")
         while True:
             recv_reqs = self.recv_requests()
             self.process_input_requests(recv_reqs)
@@ -291,3 +317,46 @@ class Scheduler:
                 pass
 
             self.last_batch = batch
+
+
+def run_scheduler_process(
+    server_args: ServerArgs,
+    port_args: PortArgs,
+    gpu_id: int,
+    tp_rank: int,
+    pipe_writer,
+):
+    """
+    Run the scheduler manager.
+    """
+    prefix = ""
+    if server_args.tp_size > 1:
+        prefix = f" TP{tp_rank}"
+
+    setproctitle.setproctitle(f"mini-sglang::scheduler{prefix}")
+
+    configure_logger(server_args.log_level, prefix=prefix)
+
+    try:
+        scheduler = Scheduler(
+            server_args=server_args,
+            port_args=port_args,
+            gpu_id=gpu_id,
+            tp_rank=tp_rank,
+        )
+        pipe_writer.send(
+            {
+                "status": "ok",
+                "message": f"Scheduler process {prefix} started successfully.",
+            }
+        )
+        scheduler.event_loop_normal()
+    except Exception as e:
+        exc = traceback.format_exc()
+        logger.error(f"Scheduler process {prefix} failed: {exc}")
+        pipe_writer.send(
+            {
+                "status": "error",
+                "message": f"Scheduler process {prefix} failed: {exc}",
+            }
+        )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from enum import Enum
-from typing import List, Union
+from typing import List, Optional, Union
 
 from mini_sglang.managers.req_info import Req
 from mini_sglang.mem_cache.base_cache import BasePrefixCache
@@ -23,7 +23,7 @@ class SchedulerPolicy:
     def __init__(
         self,
         policy: str,
-        tree_cache: BasePrefixCache,
+        tree_cache: Optional[BasePrefixCache] = None,
     ):
         self.policy = CachePolicy(policy)
         self.tree_cache = tree_cache

@@ -291,12 +291,17 @@ class BatchInfo:
         )
         self.out_cache_loc = torch.cat([self.out_cache_loc, other.out_cache_loc], dim=0)
 
-    def filter_req(self, keep_indices: List[int]):
+    def filter_reqs(self, exclude_indices: List[int]):
         """
         Filter the requests in the batch based on the given indices to keep.
 
         call this method before prepare_for_xxx!!
         """
+
+        if len(exclude_indices) == 0:
+            return
+
+        keep_indices = [i for i in range(self.batch_size) if i not in exclude_indices]
 
         self.reqs = [self.reqs[i] for i in keep_indices]
 

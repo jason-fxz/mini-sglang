@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from mini_sglang.managers.batch_info import BaseFinishReason
+from mini_sglang.managers.req_info import BaseFinishReason
 from mini_sglang.managers.sampling_params import SamplingParams
 
 
@@ -15,6 +15,8 @@ class TokenizedGenerateReqInput:
     input_ids: List[int]
     # The sampling parameters
     sampling_params: SamplingParams
+    # Whether to stream the output
+    stream: bool = False
 
 
 @dataclass
@@ -45,3 +47,13 @@ class GenerateReqInput:
     rid: Optional[str] = None
     # Whether to stream the output
     stream: bool = False
+
+
+@dataclass
+class BatchStrOut:
+    # The request ids
+    rids: List[str]
+    # The finish reason
+    finished_reasons: List[BaseFinishReason]
+    # The output texts
+    output_texts: List[str]

@@ -77,7 +77,7 @@ class Req:
         self.req_id = next(Req.counter)
         self.status = ReqStatus.WAITING
         self.token_ids = copy(token_ids)  # upd
-        self.max_tokens = sampling_params.max_tokens
+        self.max_tokens = sampling_params.max_new_tokens
         self.num_prompt_tokens = len(token_ids)
         self.ignore_eos = sampling_params.ignore_eos
         self.sampling_params = sampling_params
