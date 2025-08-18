@@ -50,6 +50,8 @@ class Scheduler:
 
         self.forward_ct = 0
 
+        torch.cuda.set_device(gpu_id)
+
         # IPC init
         context = zmq.Context(2)
         self.recv_from_tokenizer = get_zmq_socket(
@@ -62,23 +64,19 @@ class Scheduler:
         # init dist group
         self.init_tp_group(tp_rank, self.tp_size)
 
-        # init memory pool
-        self.model_config = ModelConfig(server_args.model)
-        self.init_memory_pool(
-            server_args.max_num_reqs, self.model_config.max_context_len
-        )
-
         # init model runner
+        self.model_config = ModelConfig(server_args.model)
         self.model_runner = ModelRunner(
             model_config=self.model_config,
             server_args=server_args,
             gpu_id=gpu_id,
             tp_rank=tp_rank,
             tp_size=self.tp_size,
-            req_to_token_pool=self.req_to_token_pool,
-            page_allocator=self.page_allocator,
-            kv_cache_pool=self.kv_cache_pool,
         )
+
+        self.req_to_token_pool = self.model_runner.req_to_token_pool
+        self.page_allocator = self.model_runner.page_allocator
+        self.kv_cache_pool = self.model_runner.kv_cache_pool
 
         self.sampler = Sampler()
 
@@ -114,6 +112,10 @@ class Scheduler:
         )  # free memory in bytes
         # used_size = total_size - free_size
         used_size = torch.cuda.memory_allocated(self.gpu_id)
+        GB = 1024 * 1024 * 1024
+        logger.info(
+            f"GPU {self.gpu_id} free size: {free_size/GB}, total size: {total_size/GB}, used size: {used_size/GB}"
+        )
         num_kv_heads = self.model_config.num_kv_heads // self.tp_size
 
         cell_size = (

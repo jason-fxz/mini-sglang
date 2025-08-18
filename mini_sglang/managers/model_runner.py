@@ -98,6 +98,11 @@ class ModelRunner:
         )  # free memory in bytes
         # used_size = total_size - free_size
         used_size = torch.cuda.memory_allocated(self.gpu_id)
+        GB = 1024 * 1024 * 1024
+        logger.info(
+            f"GPU {self.gpu_id} free size: {free_size/GB:.2f} GB, total size: {total_size/GB:.2f} GB, used size: {used_size/GB:.2f} GB"
+        )
+
         num_kv_heads = self.model_config.num_kv_heads // self.tp_size
 
         cell_size = (
@@ -144,7 +149,7 @@ class ModelRunner:
             size=self.num_tokens,
             page_size=self.page_size,
             dtype=self.model_config.kv_cache_dtype,
-            head_num=self.model_config.num_kv_heads,
+            head_num=self.model_config.num_kv_heads // self.tp_size,
             head_dim=self.model_config.head_dim,
             layer_num=self.model_config.num_hidden_layers,
             device=self.device,
