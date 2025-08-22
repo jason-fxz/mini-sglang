@@ -1,3 +1,4 @@
+import logging
 from typing import Iterable, Optional, Tuple, Union
 
 import torch
@@ -17,6 +18,8 @@ from mini_sglang.layers.linear import (
 from mini_sglang.layers.logits_processor import LogitsProcessor
 from mini_sglang.layers.rotary_embedding import get_rope
 from mini_sglang.managers.batch_info import BatchInfo
+
+logger = logging.getLogger(__name__)
 
 
 class Qwen3Attention(nn.Module):

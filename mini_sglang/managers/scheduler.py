@@ -24,8 +24,10 @@ from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
 from mini_sglang.utils.model_config import ModelConfig
 from mini_sglang.utils.utils import (
     TypeBasedDispatcher,
+    broadcast_pyobj,
     configure_logger,
     get_zmq_socket,
+    set_random_seed,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,17 +54,21 @@ class Scheduler:
 
         torch.cuda.set_device(gpu_id)
 
+        # set random seed
+        set_random_seed(server_args.random_seed)
+
         # IPC init
-        context = zmq.Context(2)
-        self.recv_from_tokenizer = get_zmq_socket(
-            context, zmq.PULL, port_args.scheduler_input_ipc, False
-        )
-        self.send_to_detokenizer = get_zmq_socket(
-            context, zmq.PUSH, port_args.detokenizer_input_ipc, False
-        )
+        if self.tp_rank == 0:
+            context = zmq.Context(2)
+            self.recv_from_tokenizer = get_zmq_socket(
+                context, zmq.PULL, port_args.scheduler_input_ipc, False
+            )
+            self.send_to_detokenizer = get_zmq_socket(
+                context, zmq.PUSH, port_args.detokenizer_input_ipc, False
+            )
 
         # init dist group
-        self.init_tp_group(tp_rank, self.tp_size)
+        self.init_dist_group(tp_rank, self.tp_size)
 
         # init model runner
         self.model_config = ModelConfig(server_args.model)
@@ -101,10 +107,13 @@ class Scheduler:
         self.scheduler_policy = server_args.scheduler_policy
         self.policy = SchedulerPolicy(self.scheduler_policy)
 
-    def init_tp_group(self, tp_rank: int, tp_size: int):
+    def init_dist_group(self, tp_rank: int, tp_size: int):
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = str(self.port_args.nccl_port)
         dist.init_process_group(backend="nccl", rank=tp_rank, world_size=tp_size)
+        self.tp_cpu_group = dist.new_group(
+            backend="gloo", ranks=[i for i in range(tp_size)]
+        )
 
     def calc_max_num_token(self) -> Tuple[int, int]:
         free_size, total_size = torch.cuda.mem_get_info(
@@ -186,12 +195,20 @@ class Scheduler:
         Receive requests from the tokenizer.
         """
         recv_reqs = []
-        while True:
-            try:
-                recv_req = self.recv_from_tokenizer.recv_pyobj(zmq.NOBLOCK)
-            except zmq.ZMQError:
-                break
-            recv_reqs.append(recv_req)
+        if self.tp_rank == 0:
+            while True:
+                try:
+                    recv_req = self.recv_from_tokenizer.recv_pyobj(zmq.NOBLOCK)
+                except zmq.ZMQError:
+                    break
+                recv_reqs.append(recv_req)
+        else:
+            recv_reqs = None
+
+        if self.tp_size > 1:
+            recv_reqs = broadcast_pyobj(
+                recv_reqs, self.tp_rank, self.tp_cpu_group, src=0
+            )
 
         if len(recv_reqs) > 0:
             logger.debug(f"Received {len(recv_reqs)} requests from tokenizer.")
@@ -291,20 +308,20 @@ class Scheduler:
                 finished_reqs_indices.append(i)
 
         # send to detokenizer
-        batch_out = BatchTokenIDOut(
-            rids=[req.rid for req in batch.reqs],
-            finished_reasons=[req.finish_reason for req in batch.reqs],
-            output_ids=[req.last_token_id for req in batch.reqs],
-        )
+        if self.tp_rank == 0:
+            batch_out = BatchTokenIDOut(
+                rids=[req.rid for req in batch.reqs],
+                finished_reasons=[req.finish_reason for req in batch.reqs],
+                output_ids=[req.last_token_id for req in batch.reqs],
+            )
 
-        self.send_to_detokenizer.send_pyobj(batch_out)
+            self.send_to_detokenizer.send_pyobj(batch_out)
 
         # remove finished reqs
         batch.filter_reqs(finished_reqs_indices)
 
     def event_loop_normal(self):
         logger.info("Scheduler event loop started.")
-        # print("FUCK")
         while True:
             recv_reqs = self.recv_requests()
             self.process_input_requests(recv_reqs)
@@ -338,6 +355,9 @@ def run_scheduler_process(
     setproctitle.setproctitle(f"mini-sglang::scheduler{prefix}")
 
     configure_logger(server_args.log_level, prefix=prefix)
+
+    # fix random seed
+    torch.manual_seed(server_args.random_seed)
 
     try:
         scheduler = Scheduler(

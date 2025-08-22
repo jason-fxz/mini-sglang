@@ -243,13 +243,13 @@ class RowParallelLinear(LinearBase):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = F.linear(x, self.weight, self.bias if self.tp_rank == 0 else None)
-        if self.tp_rank > 1:
+        if self.tp_size > 1:
             dist.all_reduce(y, op=dist.ReduceOp.SUM)
         return y
 
     def weight_loader(self, param: Parameter, loaded_weight: torch.Tensor) -> None:
         param_data = param.data
-        shard_size = self.input_size_per_partition
+        shard_size = param_data.size(1)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(1, start_idx, shard_size)
         assert (

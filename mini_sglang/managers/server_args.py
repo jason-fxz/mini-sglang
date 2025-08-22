@@ -7,8 +7,10 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import os
+import random
 import socket
 import tempfile
+from typing import Optional
 
 
 @dataclasses.dataclass
@@ -30,8 +32,12 @@ class ServerArgs:
     gpu_memory_utilization: float = 0.9
     log_level: str = "INFO"
 
+    random_seed: Optional[int] = None
+
     def __post_init__(self):
         assert os.path.isdir(self.model)
+        if self.random_seed is None:
+            self.random_seed = random.randint(0, 1 << 30)
 
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser):

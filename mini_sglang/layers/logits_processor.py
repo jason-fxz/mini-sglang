@@ -59,13 +59,9 @@ class LogitsProcessor(nn.Module):
             logits = F.linear(hidden_states, lm_head.weight)
 
         if self.tp_size > 1:
-            all_logits = (
-                [torch.empty_like(logits) for _ in range(self.tp_size)]
-                if self.tp_rank == 0
-                else None
-            )
-            dist.gather(logits, all_logits, 0)
-            logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
+            all_logits = [torch.empty_like(logits) for _ in range(self.tp_size)]
+            dist.all_gather(all_logits, logits)
+            logits = torch.cat(all_logits, dim=-1)
 
         # Return the processed logits
         return LogitsProcessorOutput(next_token_logits=logits)
