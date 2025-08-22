@@ -33,6 +33,6 @@ A lightweight SGLang implementation built from scratch.
   - [ ] streaming output
 
 - Others
-  - [ ] Tensor Parallelism
+  - [x] Tensor Parallelism
   - [ ] CUDA graph support for decode
   - [ ] Overlap Scheduling
