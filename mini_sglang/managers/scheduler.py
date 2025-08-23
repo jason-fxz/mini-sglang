@@ -22,6 +22,7 @@ from mini_sglang.managers.server_args import PortArgs, ServerArgs
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
 from mini_sglang.utils.model_config import ModelConfig
+from mini_sglang.utils.profiler import SafeProfiler
 from mini_sglang.utils.utils import (
     TypeBasedDispatcher,
     broadcast_pyobj,
@@ -372,7 +373,17 @@ def run_scheduler_process(
                 "message": f"Scheduler process {prefix} started successfully.",
             }
         )
-        scheduler.event_loop_normal()
+
+        if server_args.profile:
+            with SafeProfiler(
+                record_shapes=False,
+                profile_memory=False,
+                with_stack=True,
+            ):
+                scheduler.event_loop_normal()
+        else:
+            scheduler.event_loop_normal()
+
     except Exception as e:
         exc = traceback.format_exc()
         logger.error(f"Scheduler process {prefix} failed: {exc}")

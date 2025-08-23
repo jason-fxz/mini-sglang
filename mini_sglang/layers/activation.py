@@ -9,7 +9,6 @@ class SiluAndMul(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-    @torch.compile
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x, y = x.chunk(2, dim=-1)
         return F.silu(x) * y

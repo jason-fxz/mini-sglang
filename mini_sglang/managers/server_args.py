@@ -33,6 +33,7 @@ class ServerArgs:
     log_level: str = "INFO"
 
     random_seed: Optional[int] = None
+    profile: bool = False
 
     def __post_init__(self):
         assert os.path.isdir(self.model)
@@ -103,6 +104,23 @@ class ServerArgs:
             default=ServerArgs.log_level,
             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
             help="Logging level for the server.",
+        )
+        parser.add_argument(
+            "--nccl_port",
+            type=int,
+            default=None,
+            help="Port for NCCL communication. If not set, a random free port will be used.",
+        )
+        parser.add_argument(
+            "--random_seed",
+            type=int,
+            default=None,
+            help="Random seed for reproducibility. If not set, a random seed will be generated.",
+        )
+        parser.add_argument(
+            "--profile",
+            action="store_true",
+            help="Enable profiling for performance analysis.",
         )
 
 
