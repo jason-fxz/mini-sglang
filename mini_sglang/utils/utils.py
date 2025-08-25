@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import pickle
 import random
+import sys
 from typing import Any, Callable, List, Optional, Tuple, Type
 
 import numpy as np
@@ -121,6 +122,10 @@ def configure_logger(log_level: str, prefix: str = ""):
         format=format,
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
+        handlers=[
+            logging.FileHandler("mini-sglang.log", mode="a", encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
     )
 
 
