@@ -31,10 +31,13 @@ class ChunkCache(BasePrefixCache):
 
     def cache_finished_req(self, req: Req):
         page_ids = self.req_to_token_pool.req_to_page[
-            req.req_pool_idx, : req.num_tokens
+            req.req_pool_idx,
+            : (req.num_tokens - 1 + self.page_size - 1) // self.page_size,
         ]
         self.req_to_token_pool.free(req.req_pool_idx)
         self.page_allocator.free(page_ids)
 
     def cache_unfinished_req(self, req: Req):
-        pass
+        req.prefix_indices = self.req_to_token_pool.req_to_token[req.req_pool_idx][
+            : len(req) - 1
+        ]

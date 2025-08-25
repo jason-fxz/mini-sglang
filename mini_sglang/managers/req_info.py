@@ -84,9 +84,11 @@ class Req:
         self.req_pool_idx = req_pool_idx
 
         self.finish_reason = None  # upd
+        self.last_node = None  # radix tree last node
 
         # prefix info
         # The indices to kv cache for shared prefix
+        # only used in extend mode
         self.prefix_indices: torch.tensor = torch.tensor([], dtype=torch.int32)  # upd
 
     @property

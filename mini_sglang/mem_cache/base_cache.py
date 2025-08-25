@@ -1,9 +1,14 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from typing import Any, List, NamedTuple
 
 import torch
 
 from mini_sglang.managers.req_info import Req
+
+
+class MatchResult(NamedTuple):
+    match_indices: torch.Tensor
+    last_node: Any
 
 
 class BasePrefixCache(ABC):
@@ -14,7 +19,7 @@ class BasePrefixCache(ABC):
         pass
 
     @abstractmethod
-    def match_prefix(self, key: List[int], **kwargs):
+    def match_prefix(self, key: List[int], **kwargs) -> MatchResult:
         pass
 
     @abstractmethod

@@ -47,11 +47,13 @@ class ReqToTokenPool:
             self.req_to_page = torch.zeros(
                 (size, self.max_page_num), dtype=torch.int32, device=device
             )
+        else:
+            self.req_to_page = self.req_to_token
 
         self.free_slots = list(range(size))
 
-    def write(self, indices, values):
-        self.req_to_token[indices] = values
+    # def write(self, indices, values):
+    #     self.req_to_token[indices] = values
 
     def available_size(self):
         return len(self.free_slots)
@@ -71,3 +73,19 @@ class ReqToTokenPool:
 
     def clear(self):
         self.free_slots = list(range(self.size))
+
+    def write_tokens(self, req_idx: int, indices: slice, values: torch.Tensor):
+        self.req_to_token[req_idx, indices] = values
+        if self.page_size > 1:
+            assert (
+                indices.start % self.page_size == 0
+                and indices.stop % self.page_size == 0
+            ), "Token indices must be page-aligned when page_size > 1."
+            start_page = indices.start // self.page_size
+            end_page = indices.stop // self.page_size
+            page_indices = torch.arange(
+                0, end_page - start_page, self.page_size, device=self.device
+            )
+            self.req_to_page[req_idx, start_page:end_page] = (
+                values[page_indices] // self.page_size
+            )

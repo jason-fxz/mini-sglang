@@ -19,6 +19,8 @@ from mini_sglang.managers.model_runner import ModelRunner
 from mini_sglang.managers.req_info import Req
 from mini_sglang.managers.scheduler_policy import SchedulerPolicy
 from mini_sglang.managers.server_args import PortArgs, ServerArgs
+from mini_sglang.mem_cache.chunk_cache import ChunkCache
+from mini_sglang.mem_cache.radix_cache import RadixCache
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
 from mini_sglang.utils.model_config import ModelConfig
@@ -84,6 +86,7 @@ class Scheduler:
         self.req_to_token_pool = self.model_runner.req_to_token_pool
         self.page_allocator = self.model_runner.page_allocator
         self.kv_cache_pool = self.model_runner.kv_cache_pool
+        self.init_tree_cache()
 
         self.sampler = Sampler()
 
@@ -116,67 +119,84 @@ class Scheduler:
             backend="gloo", ranks=[i for i in range(tp_size)]
         )
 
-    def calc_max_num_token(self) -> Tuple[int, int]:
-        free_size, total_size = torch.cuda.mem_get_info(
-            self.gpu_id
-        )  # free memory in bytes
-        # used_size = total_size - free_size
-        used_size = torch.cuda.memory_allocated(self.gpu_id)
-        GB = 1024 * 1024 * 1024
-        logger.info(
-            f"GPU {self.gpu_id} free size: {free_size/GB}, total size: {total_size/GB}, used size: {used_size/GB}"
-        )
-        num_kv_heads = self.model_config.num_kv_heads // self.tp_size
+    def init_tree_cache(self):
+        # init radix cache
+        if self.server_args.disable_radix_cache:
+            self.tree_cache = ChunkCache(
+                req_to_token_pool=self.req_to_token_pool,
+                page_allocator=self.page_allocator,
+                kv_cache_pool=self.kv_cache_pool,
+                page_size=self.page_size,
+            )
+        else:
+            self.tree_cache = RadixCache(
+                req_to_token_pool=self.req_to_token_pool,
+                page_allocator=self.page_allocator,
+                kv_cache_pool=self.kv_cache_pool,
+                page_size=self.page_size,
+            )
 
-        cell_size = (
-            num_kv_heads
-            * self.model_config.head_dim
-            * self.model_config.num_hidden_layers
-            * 2  # k + v
-            * self.model_config.kv_cache_dtype.itemsize
-        )
-        block_size = self.page_size * cell_size
+    # def calc_max_num_token(self) -> Tuple[int, int]:
+    #     free_size, total_size = torch.cuda.mem_get_info(
+    #         self.gpu_id
+    #     )  # free memory in bytes
+    #     # used_size = total_size - free_size
+    #     used_size = torch.cuda.memory_allocated(self.gpu_id)
+    #     GB = 1024 * 1024 * 1024
+    #     logger.info(
+    #         f"GPU {self.gpu_id} free size: {free_size/GB}, total size: {total_size/GB}, used size: {used_size/GB}"
+    #     )
+    #     num_kv_heads = self.model_config.num_kv_heads // self.tp_size
 
-        num_kvcache_pages = (
-            int(total_size * self.server_args.gpu_memory_utilization - used_size)
-            // block_size
-        )
+    #     cell_size = (
+    #         num_kv_heads
+    #         * self.model_config.head_dim
+    #         * self.model_config.num_hidden_layers
+    #         * 2  # k + v
+    #         * self.model_config.kv_cache_dtype.itemsize
+    #     )
+    #     block_size = self.page_size * cell_size
 
-        num_kvcache_tokens = num_kvcache_pages * self.page_size
+    #     num_kvcache_pages = (
+    #         int(total_size * self.server_args.gpu_memory_utilization - used_size)
+    #         // block_size
+    #     )
 
-        return num_kvcache_pages, num_kvcache_tokens
+    #     num_kvcache_tokens = num_kvcache_pages * self.page_size
 
-    def init_memory_pool(
-        self,
-        max_num_reqs: Optional[int] = None,
-        max_total_tokens: Optional[int] = None,
-    ):
-        num_pages, num_tokens = self.calc_max_num_token()
-        self.num_pages = num_pages
-        self.num_tokens = num_tokens
+    #     return num_kvcache_pages, num_kvcache_tokens
 
-        self.page_allocator = PageAllocator(
-            page_num=self.num_pages,
-            page_size=self.page_size,
-            device=self.device,
-        )
+    # def init_memory_pool(
+    #     self,
+    #     max_num_reqs: Optional[int] = None,
+    #     max_total_tokens: Optional[int] = None,
+    # ):
+    #     num_pages, num_tokens = self.calc_max_num_token()
+    #     self.num_pages = num_pages
+    #     self.num_tokens = num_tokens
 
-        self.req_to_token_pool = ReqToTokenPool(
-            size=max_num_reqs,
-            max_tokens=max_total_tokens,
-            page_size=self.page_size,
-            device=self.device,
-        )
+    #     self.page_allocator = PageAllocator(
+    #         page_num=self.num_pages,
+    #         page_size=self.page_size,
+    #         device=self.device,
+    #     )
 
-        self.kv_cache_pool = MHAKVPool(
-            size=self.num_tokens,
-            page_size=self.page_size,
-            dtype=self.model_config.kv_cache_dtype,
-            head_num=self.model_config.num_kv_heads,
-            head_dim=self.model_config.head_dim,
-            layer_num=self.model_config.num_hidden_layers,
-            device=self.device,
-        )
+    #     self.req_to_token_pool = ReqToTokenPool(
+    #         size=max_num_reqs,
+    #         max_tokens=max_total_tokens,
+    #         page_size=self.page_size,
+    #         device=self.device,
+    #     )
+
+    #     self.kv_cache_pool = MHAKVPool(
+    #         size=self.num_tokens,
+    #         page_size=self.page_size,
+    #         dtype=self.model_config.kv_cache_dtype,
+    #         head_num=self.model_config.num_kv_heads,
+    #         head_dim=self.model_config.head_dim,
+    #         layer_num=self.model_config.num_hidden_layers,
+    #         device=self.device,
+    #     )
 
     def handle_generate_request(self, recv_req: TokenizedGenerateReqInput):
         # handle new request
@@ -232,6 +252,11 @@ class Scheduler:
             if self.running_batch.batch_size >= self.server_args.max_running_bs:
                 break
 
+            match_result = self.tree_cache.match_prefix(key=req.token_ids)
+            if match_result is not None:
+                req.last_node = match_result.last_node
+                req.prefix_indices = match_result.match_indices
+
             can_run_reqs.append(req)
 
         # update waiting queue
@@ -280,8 +305,8 @@ class Scheduler:
         return ret
 
     def run_batch(self, batch: BatchInfo):
+        self.print_batch(batch)
         self.forward_ct += 1
-
         return self.model_runner.forward_generate(batch)
 
     def process_batch_result(self, batch: BatchInfo, result: any):
@@ -298,15 +323,16 @@ class Scheduler:
         # Update the batch info with the output ids
         for i, req in enumerate(batch.reqs):
             req.token_ids.append(output_ids[i].item())
-            req.prefix_indices = self.req_to_token_pool.req_to_token[req.req_pool_idx][
-                : len(req) - 1
-            ]
 
         # check finish req
         finished_reqs_indices = []
         for i, req in enumerate(batch.reqs):
             if req.check_finished():
                 finished_reqs_indices.append(i)
+                self.tree_cache.cache_finished_req(req)
+            elif batch.forward_mode.is_extend():
+                # decode mode will not update tree cache
+                self.tree_cache.cache_unfinished_req(req)
 
         # send to detokenizer
         if self.tp_rank == 0:
@@ -320,6 +346,21 @@ class Scheduler:
 
         # remove finished reqs
         batch.filter_reqs(finished_reqs_indices)
+
+    def print_batch(self, batch: BatchInfo):
+        if self.tp_rank != 0:
+            return
+
+        extend_token_lens = 0
+        prefix_token_lens = 0
+        for req in batch.reqs:
+            extend_token_lens += len(req.token_ids) - len(req.prefix_indices)
+            prefix_token_lens += len(req.prefix_indices)
+
+        batch_mode = "Extend" if batch.forward_mode.is_extend() else "Decode"
+        logger.debug(
+            f"{batch_mode} #BS: {batch.batch_size} #Tokens: {extend_token_lens} #PrefixTokens: {prefix_token_lens}"
+        )
 
     def event_loop_normal(self):
         logger.info("Scheduler event loop started.")

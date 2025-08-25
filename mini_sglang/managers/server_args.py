@@ -35,7 +35,10 @@ class ServerArgs:
     random_seed: Optional[int] = None
     profile: bool = False
 
+    disable_radix_cache: bool = False
+
     def __post_init__(self):
+        self.model = os.path.expanduser(self.model)
         assert os.path.isdir(self.model)
         if self.random_seed is None:
             self.random_seed = random.randint(0, 1 << 30)
@@ -121,6 +124,11 @@ class ServerArgs:
             "--profile",
             action="store_true",
             help="Enable profiling for performance analysis.",
+        )
+        parser.add_argument(
+            "--disable_radix_cache",
+            action="store_true",
+            help="Disable the radix cache mechanism.",
         )
 
 

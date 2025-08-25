@@ -161,10 +161,12 @@ class BatchInfo:
             # Write to req2token pool
             pos = 0
             for i in range(bs):
-                self.req_to_token_pool.write(
-                    (req_pool_indices[i], slice(prefix_lens[i], seq_lens[i])),
-                    out_cache_loc[pos : pos + extend_lens[i]],
-                )
+                self.req_to_token_pool.req_to_token[
+                    req_pool_indices[i], : prefix_lens[i]
+                ] = self.reqs[i].prefix_indices
+                self.req_to_token_pool.req_to_token[
+                    (req_pool_indices[i], slice(prefix_lens[i], seq_lens[i]))
+                ] = out_cache_loc[pos : pos + extend_lens[i]]
                 pos += extend_lens[i]
         else:
             page_size = self.page_allocator.page_size
@@ -187,6 +189,15 @@ class BatchInfo:
                     prefix_lens[i] % page_size == 0
                 ), f"Prefix length {prefix_lens[i]} is not page-aligned"
                 start_page = prefix_lens[i] // page_size
+                # self.req_to_token_pool.req_to_token[
+                #     req_pool_indices[i], : prefix_lens[i]
+                # ] = self.reqs[i].prefix_indices
+                self.req_to_token_pool.write_tokens(
+                    req_pool_indices[i],
+                    slice(0, prefix_lens[i]),
+                    self.reqs[i].prefix_indices,
+                )
+
                 self.req_to_token_pool.req_to_page[
                     req_pool_indices[i], start_page : start_page + num_pages[i]
                 ] = page_loc[pos_page : pos_page + num_pages[i]]
@@ -220,14 +231,14 @@ class BatchInfo:
 
         # Init tensors
         reqs = self.reqs
-        input_ids = [r.token_ids[len(r.prefix_indices) :] for r in reqs]
+        input_ids = [r.last_token_id for r in reqs]
         locs = self.seq_lens.clone()
         seq_lens_old = locs.tolist()
         self.seq_lens.add_(1)
         self.prefix_seq_lens = None
         self.input_seq_lens = None
 
-        input_ids_tensor = torch.tensor(sum(input_ids, []), dtype=torch.int32).to(
+        input_ids_tensor = torch.tensor(input_ids, dtype=torch.int32).to(
             self.device, non_blocking=True
         )
 
@@ -264,7 +275,9 @@ class BatchInfo:
 
         # Write to req2token pool
         self.out_cache_loc = out_cache_loc
-        self.req_to_token_pool.write((self.req_pool_indices, locs), self.out_cache_loc)
+        self.req_to_token_pool.req_to_token[(self.req_pool_indices, locs)] = (
+            self.out_cache_loc
+        )
         self.positions = locs.to(self.device, non_blocking=True)
         self.input_ids = input_ids_tensor
 
