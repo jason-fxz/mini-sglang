@@ -109,7 +109,7 @@ class Scheduler:
 
         # scheduler policy
         self.scheduler_policy = server_args.scheduler_policy
-        self.policy = SchedulerPolicy(self.scheduler_policy)
+        self.policy = SchedulerPolicy(self.scheduler_policy, self.tree_cache)
 
     def init_dist_group(self, tp_rank: int, tp_size: int):
         os.environ["MASTER_ADDR"] = "localhost"
@@ -252,7 +252,8 @@ class Scheduler:
             if self.running_batch.batch_size >= self.server_args.max_running_bs:
                 break
 
-            req.calc_prefix(self.tree_cache)
+            if not self.server_args.disable_radix_cache:
+                req.calc_prefix(self.tree_cache)
 
             can_run_reqs.append(req)
 

@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import uvloop
 import zmq.asyncio
 from transformers import AutoTokenizer
 
@@ -19,6 +20,8 @@ from mini_sglang.utils.utils import (
     configure_logger,
     get_zmq_socket,
 )
+
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 

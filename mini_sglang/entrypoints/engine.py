@@ -2,7 +2,7 @@ import asyncio
 import logging
 import multiprocessing as mp
 import uuid
-from typing import Dict, Iterator, List, Optional, Union
+from typing import AsyncIterator, Dict, Iterator, List, Optional, Union
 
 import setproctitle
 
@@ -57,6 +57,29 @@ class Engine:
             return generator_wrapper()
         else:
             ret = loop.run_until_complete(generator.__anext__())
+            return ret
+
+    async def async_generate(
+        self,
+        prompt: Optional[str] = None,
+        sampling_params: Optional[Dict] = None,
+        # either input_ids or prompt
+        input_ids: Optional[List[int]] = None,
+        stream: bool = False,
+    ) -> Union[Dict, AsyncIterator[Dict]]:
+        obj = GenerateReqInput(
+            text=prompt,
+            input_ids=input_ids,
+            sampling_params=sampling_params,
+            stream=stream,
+            rid=uuid.uuid4().hex,
+        )
+        generator = self.tokenizer_manager.generate_request(obj)
+
+        if stream:
+            return generator
+        else:
+            ret = await generator.__anext__()
             return ret
 
 
