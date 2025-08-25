@@ -4,6 +4,10 @@ A lightweight SGLang implementation built from scratch.
 
 ## TODO
 
+- Known Issues
+  - GPU memory leak
+  - GPU-CPU Synchronization issue
+
 - Basic Architecture
 
   Tokenizer -> Managers -> Detokenizer three-stage architecture
@@ -26,11 +30,13 @@ A lightweight SGLang implementation built from scratch.
   - [x] page size == 1
   - [x] page size > 1
   - [ ] Radix Attention
+    - [x] prefix match
+    - [ ] evict strategy
 
 - API support
-  - [ ] SGLang generate API
+  - [x] SGLang generate API
   - [ ] OpenAI Compatible API (basic)
-  - [ ] streaming output
+  - [x] streaming output
 
 - Others
   - [x] Tensor Parallelism
