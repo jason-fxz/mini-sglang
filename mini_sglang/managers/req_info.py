@@ -7,6 +7,7 @@ import torch
 
 from mini_sglang.managers.sampling_params import SamplingParams
 from mini_sglang.managers.server_args import ServerArgs
+from mini_sglang.mem_cache.base_cache import BasePrefixCache
 
 
 class BaseFinishReason:
@@ -121,3 +122,11 @@ class Req:
             self.finish_reason = FINISH_MATCHED_TOKEN(self.last_token_id)
 
         return self.is_finished
+
+    def calc_prefix(self, tree_cache: BasePrefixCache):
+        match_result = tree_cache.match_prefix(
+            key=self.token_ids[:-1]
+        )  # exclude last token
+        if match_result is not None:
+            self.last_node = match_result.last_node
+            self.prefix_indices = match_result.match_indices

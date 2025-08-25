@@ -252,10 +252,7 @@ class Scheduler:
             if self.running_batch.batch_size >= self.server_args.max_running_bs:
                 break
 
-            match_result = self.tree_cache.match_prefix(key=req.token_ids)
-            if match_result is not None:
-                req.last_node = match_result.last_node
-                req.prefix_indices = match_result.match_indices
+            req.calc_prefix(self.tree_cache)
 
             can_run_reqs.append(req)
 
@@ -351,16 +348,19 @@ class Scheduler:
         if self.tp_rank != 0:
             return
 
-        extend_token_lens = 0
-        prefix_token_lens = 0
-        for req in batch.reqs:
-            extend_token_lens += len(req.token_ids) - len(req.prefix_indices)
-            prefix_token_lens += len(req.prefix_indices)
+        if batch.forward_mode.is_extend():
+            extend_token_lens = 0
+            prefix_token_lens = 0
+            for req in batch.reqs:
+                extend_token_lens += len(req.token_ids) - len(req.prefix_indices)
+                prefix_token_lens += len(req.prefix_indices)
 
-        batch_mode = "Extend" if batch.forward_mode.is_extend() else "Decode"
-        logger.debug(
-            f"{batch_mode} #BS: {batch.batch_size} #Tokens: {extend_token_lens} #PrefixTokens: {prefix_token_lens}"
-        )
+            logger.debug(
+                f"Extend #BS: {batch.batch_size} #Tokens: {extend_token_lens + prefix_token_lens} #PrefixTokens: {prefix_token_lens} #ExtendTokens: {extend_token_lens}"
+            )
+        else:
+            total_tokens = sum(len(req) for req in batch.reqs)
+            logger.debug(f"Decode #BS: {batch.batch_size} #Tokens: {total_tokens}")
 
     def event_loop_normal(self):
         logger.info("Scheduler event loop started.")

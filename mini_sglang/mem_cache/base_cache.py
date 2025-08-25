@@ -1,9 +1,9 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any, List, NamedTuple
 
 import torch
-
-from mini_sglang.managers.req_info import Req
 
 
 class MatchResult(NamedTuple):
