@@ -285,20 +285,20 @@ class BatchInfo:
         """
         Merge another batch into this batch.
         """
-        assert (
-            self.forward_mode == other.forward_mode
-        ), "Cannot merge batches with different forward modes."
+        # assert (
+        #     self.forward_mode == other.forward_mode
+        # ), "Cannot merge batches with different forward modes."
 
         self.reqs.extend(other.reqs)
         self.input_ids = torch.cat([self.input_ids, other.input_ids], dim=0)
         self.positions = torch.cat([self.positions, other.positions], dim=0)
         self.seq_lens = torch.cat([self.seq_lens, other.seq_lens], dim=0)
-        self.input_seq_lens = torch.cat(
-            [self.input_seq_lens, other.input_seq_lens], dim=0
-        )
-        self.prefix_seq_lens = torch.cat(
-            [self.prefix_seq_lens, other.prefix_seq_lens], dim=0
-        )
+        # self.input_seq_lens = torch.cat(
+        #     [self.input_seq_lens, other.input_seq_lens], dim=0
+        # )
+        # self.prefix_seq_lens = torch.cat(
+        #     [self.prefix_seq_lens, other.prefix_seq_lens], dim=0
+        # )
         self.req_pool_indices = torch.cat(
             [self.req_pool_indices, other.req_pool_indices], dim=0
         )
@@ -320,3 +320,4 @@ class BatchInfo:
 
         # Tensors need to be updated
         self.seq_lens = self.seq_lens[keep_indices]
+        self.req_pool_indices = self.req_pool_indices[keep_indices]
