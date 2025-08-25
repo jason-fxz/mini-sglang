@@ -10,7 +10,7 @@ import os
 import random
 import socket
 import tempfile
-from typing import Optional
+from typing import List, Optional
 
 
 @dataclasses.dataclass
@@ -19,9 +19,12 @@ class ServerArgs:
     page_size: int = 1
     attention_backend: str = "torch"
 
+    host: str = "localhost"
+    port: int = 30000
+
     max_num_reqs: int = 1024
 
-    scheduler_policy: str = "fcfs"
+    schedule_policy: str = "fcfs"
 
     max_running_bs: int = 128
 
@@ -55,9 +58,6 @@ class ServerArgs:
             help="Page size for KV cache.",
         )
         parser.add_argument(
-            "--eos", type=int, default=ServerArgs.eos, help="End of sequence token ID."
-        )
-        parser.add_argument(
             "--attention_backend",
             type=str,
             default=ServerArgs.attention_backend,
@@ -65,7 +65,7 @@ class ServerArgs:
             help="Attention backend to use.",
         )
         parser.add_argument(
-            "--tp-size",
+            "--tp_size",
             type=int,
             default=ServerArgs.tp_size,
             help="Tensor parallelism degree.",
@@ -130,6 +130,41 @@ class ServerArgs:
             action="store_true",
             help="Disable the radix cache mechanism.",
         )
+        parser.add_argument(
+            "--host",
+            type=str,
+            default=ServerArgs.host,
+            help="Host address for the server to bind to.",
+        )
+        parser.add_argument(
+            "--port",
+            type=int,
+            default=ServerArgs.port,
+            help="Port number for the server to listen on.",
+        )
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace):
+        attrs = [attr.name for attr in dataclasses.fields(cls)]
+        return cls(**{attr: getattr(args, attr) for attr in attrs})
+
+
+def prepare_server_args(argv: List[str]) -> ServerArgs:
+    """
+    Prepare the server arguments from the command line arguments.
+
+    Args:
+        args: The command line arguments. Typically, it should be `sys.argv[1:]`
+            to ensure compatibility with `parse_args` when no arguments are passed.
+
+    Returns:
+        The server arguments.
+    """
+    parser = argparse.ArgumentParser()
+    ServerArgs.add_cli_args(parser)
+    raw_args = parser.parse_args(argv)
+    server_args = ServerArgs.from_cli_args(raw_args)
+    return server_args
 
 
 def find_free_port():

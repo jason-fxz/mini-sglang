@@ -4,11 +4,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import fastapi
 import uvloop
 import zmq.asyncio
+from fastapi import BackgroundTasks
 from transformers import AutoTokenizer
 
 from mini_sglang.managers.io_struct import (
+    AbortReq,
     BatchStrOut,
     GenerateReqInput,
     TokenizedGenerateReqInput,
@@ -61,7 +64,10 @@ class TokenizerManager:
         self.rid_to_state: Dict[str, ReqState] = {}
 
         self._req_dispatcher = TypeBasedDispatcher(
-            [(BatchStrOut, self._handle_batch_output)]
+            [
+                (BatchStrOut, self._handle_batch_output),
+                (AbortReq, self._handle_abort_req),
+            ]
         )
 
         self.has_create_loop = False
@@ -100,10 +106,52 @@ class TokenizerManager:
         self.rid_to_state[obj.rid] = state
         return state
 
+    def abort_request(self, rid: str = "", abort_all: bool = False):
+        if not abort_all and rid not in self.rid_to_state:
+            return
+
+        req = AbortReq(rid=rid, abort_all=abort_all)
+        self.send_to_scheduler.send_pyobj(req)
+
+    def create_abort_task(self, obj: GenerateReqInput):
+        # Abort the request if the client is disconnected.
+        async def abort_request():
+            await asyncio.sleep(2)
+            self.abort_request(obj.rid)
+
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(abort_request)
+        return background_tasks
+
+    def _handle_abort_req(self, recv_obj: AbortReq):
+        state = self.rid_to_state[recv_obj.rid]
+        state.finished = True
+        if recv_obj.finished_reason:
+            out = {
+                "meta_info": {
+                    "id": recv_obj.rid,
+                    "finish_reason": recv_obj.finished_reason,
+                },
+            }
+        else:
+            out = {
+                "text": "",
+                "meta_info": {
+                    "id": recv_obj.rid,
+                    "finish_reason": {
+                        "type": "abort",
+                        "message": "Abort before prefill",
+                    },
+                },
+            }
+        state.out_list.append(out)
+        state.event.set()
+
     async def _wait_one_response(
         self,
         obj: GenerateReqInput,
         state: ReqState,
+        request: Optional[fastapi.Request] = None,
     ):
         """wait for the response from the detokenizer"""
 
@@ -111,6 +159,13 @@ class TokenizerManager:
             try:
                 await asyncio.wait_for(state.event.wait(), timeout=4)
             except asyncio.TimeoutError:
+                if request is not None and await request.is_disconnected():
+                    # Abort the request for disconnected requests (non-streaming, waiting queue)
+                    self.abort_request(obj.rid)
+                    # Use exception to kill the whole call stack and asyncio task
+                    raise ValueError(
+                        f"Request is disconnected from the client side (type 1). Abort request {obj.rid=}"
+                    )
                 continue
 
             out = state.out_list[-1]
@@ -132,6 +187,14 @@ class TokenizerManager:
 
             if obj.stream:
                 yield out
+            else:
+                if request is not None and await request.is_disconnected():
+                    # Abort the request for disconnected requests (non-streaming, running)
+                    self.abort_request(obj.rid)
+                    # Use exception to kill the whole call stack and asyncio task
+                    raise ValueError(
+                        f"Request is disconnected from the client side (type 3). Abort request {obj.rid=}"
+                    )
             # else:
             #     raise RuntimeError(
             #         f"Request {obj.rid} is not finished, but no more output received. "
@@ -185,12 +248,14 @@ class TokenizerManager:
         loop = asyncio.get_event_loop()
         loop.create_task(self.event_loop())
 
-    async def generate_request(self, obj: GenerateReqInput):
+    async def generate_request(
+        self, obj: GenerateReqInput, request: Optional[fastapi.Request] = None
+    ):
         self.auto_create_event_loop()
         created_time = time.time()
 
         tokenized_obj = await self._tokenize_one_request(obj)
         state = self._send_one_request(obj, tokenized_obj, created_time)
 
-        async for response in self._wait_one_response(obj, state):
+        async for response in self._wait_one_response(obj, state, request):
             yield response

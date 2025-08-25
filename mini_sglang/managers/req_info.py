@@ -92,6 +92,10 @@ class Req:
         # only used in extend mode
         self.prefix_indices: torch.tensor = torch.tensor([], dtype=torch.int32)  # upd
 
+        # If we want to abort the request in the middle of the event loop, set this to true
+        self.to_abort = False  # upd
+        self.to_abort_msg = ""  # upd
+
     @property
     def last_token_id(self) -> int:
         return self.token_ids[-1] if self.token_ids else None
@@ -111,7 +115,13 @@ class Req:
         return self.status == ReqStatus.FINISHED
 
     def check_finished(self):
-        if self.num_tokens >= self.max_tokens:
+        if self.is_finished:
+            return True
+
+        if self.to_abort:
+            self.status = ReqStatus.FINISHED
+            self.finish_reason = FINISH_ABORT(self.to_abort_msg)
+        elif self.num_tokens >= self.max_tokens:
             self.status = ReqStatus.FINISHED
             self.finish_reason = FINISH_LENGTH(self.num_tokens)
         elif (

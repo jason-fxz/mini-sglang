@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,16 @@ class BatchTokenIDOut:
 
 
 @dataclass
+class AbortReq:
+    # The request id
+    rid: str = ""
+    # Whether to abort all requests
+    abort_all: bool = False
+    # The finished reason data
+    finished_reason: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class GenerateReqInput:
     # The input prompt.
     text: Optional[str] = None
@@ -47,6 +58,10 @@ class GenerateReqInput:
     rid: Optional[str] = None
     # Whether to stream the output
     stream: bool = False
+
+    def __post_init__(self):
+        if self.rid is None:
+            self.rid = str(uuid.uuid4().hex)
 
 
 @dataclass

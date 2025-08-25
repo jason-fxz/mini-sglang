@@ -11,6 +11,7 @@ from torch import distributed as dist
 from mini_sglang.layers.sampler import Sampler
 from mini_sglang.managers.batch_info import BatchInfo, ForwardMode
 from mini_sglang.managers.io_struct import (
+    AbortReq,
     BatchTokenIDOut,
     FlushCacheReqInput,
     TokenizedGenerateReqInput,
@@ -69,6 +70,9 @@ class Scheduler:
             self.send_to_detokenizer = get_zmq_socket(
                 context, zmq.PUSH, port_args.detokenizer_input_ipc, False
             )
+            self.send_to_tokenizer = get_zmq_socket(
+                context, zmq.PUSH, port_args.tokenizer_input_ipc, False
+            )
 
         # init dist group
         self.init_dist_group(tp_rank, self.tp_size)
@@ -104,11 +108,12 @@ class Scheduler:
             [
                 (TokenizedGenerateReqInput, self.handle_generate_request),
                 (FlushCacheReqInput, self.handle_flush_cache),
+                (AbortReq, self.handle_abort_request),
             ]
         )
 
         # scheduler policy
-        self.scheduler_policy = server_args.scheduler_policy
+        self.scheduler_policy = server_args.schedule_policy
         self.policy = SchedulerPolicy(self.scheduler_policy, self.tree_cache)
 
     def init_dist_group(self, tp_rank: int, tp_size: int):
@@ -206,6 +211,38 @@ class Scheduler:
             sampling_params=recv_req.sampling_params,
         )
         self.waiting_queue.append(req)
+
+    def handle_abort_request(self, recv_req: AbortReq):
+        # handle abort request
+        to_del = []
+        for i, req in enumerate(self.waiting_queue):
+            if recv_req.abort_all or req.rid.startswith(recv_req.rid):
+                to_del.append(i)
+
+        # Sort in reverse order to avoid index issues when deleting
+        for i in reversed(to_del):
+            # Abort method 1: directly pop from the queue
+            # This only works for requests that have not started anything.
+            # We still need to send something back to TokenizerManager to clean up the state.
+            req = self.waiting_queue.pop(i)
+            self.send_to_tokenizer.send_pyobj(AbortReq(req.rid))
+            logger.debug(f"Abort queued request. {req.rid=}")
+
+        # Delete requests in the running batch
+        if self.cur_batch is self.running_batch or self.cur_batch is None:
+            reqs = self.running_batch.reqs
+        else:
+            reqs = self.running_batch.reqs + self.cur_batch.reqs
+
+        for req in reqs:
+            if not req.is_finished and (
+                recv_req.abort_all or req.rid.startswith(recv_req.rid)
+            ):
+                # Abort method 2: set `to_abort=True`
+                # The request will still run one decode forward pass.
+                # Then we reuse all existing code to clean up the KV cache allocation.
+                logger.debug(f"Abort running request. {req.rid=}")
+                req.to_abort = True
 
     def handle_flush_cache(self, req: FlushCacheReqInput):
         # TODO
