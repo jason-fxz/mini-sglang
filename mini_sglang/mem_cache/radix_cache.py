@@ -4,6 +4,7 @@ Radix Tree Cache Implementation
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import List, Optional, Tuple
 
@@ -13,6 +14,8 @@ from mini_sglang.managers.req_info import Req
 from mini_sglang.mem_cache.base_cache import BasePrefixCache, MatchResult
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, PageAllocator
+
+logger = logging.getLogger(__name__)
 
 
 class TreeNode:
@@ -61,6 +64,8 @@ class RadixCache(BasePrefixCache):
             self.device = torch.device("cpu")
 
         self.reset()
+
+        self.changed = False
 
     def reset(self):
         self.root = TreeNode()
@@ -111,6 +116,7 @@ class RadixCache(BasePrefixCache):
             The last node create a new child if the prefix is shorter
             than the last node's value.
         """
+        self.changed = True
 
         if len(key) == 0:
             return MatchResult(
@@ -159,6 +165,8 @@ class RadixCache(BasePrefixCache):
         insert a new key-value pair into the radix tree
         return matched prefix length (dividable by page_size)
         """
+        self.changed = True
+
         if len(key) == 0:
             return 0
 
@@ -222,15 +230,20 @@ class RadixCache(BasePrefixCache):
             node = node.parent
 
     def _print_tree(self, node: TreeNode, depth: int = 0):
-        print("  " * depth, len(node.key), node.key[:10], f"r={node.lock_ref}")
+        logger.info(
+            f"{"  " * depth}, {len(node.key)}, {node.key[:10]}, r={node.lock_ref}"
+        )
         for key, child in node.children.items():
             self._print_tree(child, depth + 1)
             assert key == self._get_child_key(
                 child.key
             ), f"{key} vs {self._get_child_key(child.key)}"
 
-    def pretty_print(self):
+    def pretty_print(self, print_if_changed: bool = True):
         """print the radix tree structure"""
+        if print_if_changed and not self.changed:
+            return
+        self.changed = False
         self._print_tree(self.root)
 
     def cache_unfinished_req(self, req: Req):

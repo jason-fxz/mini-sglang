@@ -29,3 +29,11 @@ class BasePrefixCache(ABC):
     @abstractmethod
     def cache_unfinished_req(self, req: Req, **kwargs):
         pass
+
+    @abstractmethod
+    def inc_lock_ref(self, node: Any):
+        pass
+
+    @abstractmethod
+    def dec_lock_ref(self, node: Any):
+        pass

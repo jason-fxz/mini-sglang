@@ -255,6 +255,8 @@ class Scheduler:
             if not self.server_args.disable_radix_cache:
                 req.calc_prefix(self.tree_cache)
 
+            # add lock_ref
+            self.tree_cache.inc_lock_ref(req.last_node)
             can_run_reqs.append(req)
 
         # update waiting queue
@@ -362,6 +364,8 @@ class Scheduler:
         else:
             total_tokens = sum(len(req) for req in batch.reqs)
             logger.debug(f"Decode #BS: {batch.batch_size} #Tokens: {total_tokens}")
+
+        self.tree_cache.pretty_print()
 
     def event_loop_normal(self):
         logger.info("Scheduler event loop started.")
