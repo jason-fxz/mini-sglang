@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,8 @@ from transformers import AutoTokenizer
 from mini_sglang.managers.io_struct import (
     AbortReq,
     BatchStrOut,
+    FlushCacheReqInput,
+    FlushCacheReqOutput,
     GenerateReqInput,
     TokenizedGenerateReqInput,
 )
@@ -63,10 +66,13 @@ class TokenizerManager:
 
         self.rid_to_state: Dict[str, ReqState] = {}
 
+        self.flush_cache_communicator = _Communicator(self.send_to_scheduler)
+
         self._req_dispatcher = TypeBasedDispatcher(
             [
                 (BatchStrOut, self._handle_batch_output),
                 (AbortReq, self._handle_abort_req),
+                (FlushCacheReqOutput, self.flush_cache_communicator.handle_recv),
             ]
         )
 
@@ -248,6 +254,11 @@ class TokenizerManager:
         loop = asyncio.get_event_loop()
         loop.create_task(self.event_loop())
 
+    # APIs
+    async def flush_cache(self) -> FlushCacheReqOutput:
+        self.auto_create_event_loop()
+        return await self.flush_cache_communicator.send(FlushCacheReqInput())
+
     async def generate_request(
         self, obj: GenerateReqInput, request: Optional[fastapi.Request] = None
     ):
@@ -259,3 +270,24 @@ class TokenizerManager:
 
         async for response in self._wait_one_response(obj, state, request):
             yield response
+
+
+class _Communicator:
+    # simple class used for request - response between tokenizer and scheduler
+
+    def __init__(self, sender):
+        self.sender = sender
+        self.results = deque()
+        self.event_queue = deque()
+
+    async def send(self, obj):
+        self.sender.send_pyobj(obj)
+        result_event = asyncio.Event()
+        self.event_queue.append(result_event)
+        await result_event.wait()
+
+        return self.results.popleft()
+
+    def handle_recv(self, recv_obj):
+        self.results.append(recv_obj)
+        self.event_queue.popleft().set()

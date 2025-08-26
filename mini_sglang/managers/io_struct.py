@@ -26,6 +26,11 @@ class FlushCacheReqInput:
 
 
 @dataclass
+class FlushCacheReqOutput:
+    success: bool
+
+
+@dataclass
 class BatchTokenIDOut:
     # The request ids
     rids: List[str]

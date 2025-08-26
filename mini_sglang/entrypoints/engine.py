@@ -82,6 +82,11 @@ class Engine:
             ret = await generator.__anext__()
             return ret
 
+    def flush_cache(self):
+        loop = asyncio.get_event_loop()
+        ret = loop.run_until_complete(self.tokenizer_manager.flush_cache())
+        return ret
+
 
 def launch_engine_subprocess(server_args: ServerArgs, port_args: PortArgs):
     """

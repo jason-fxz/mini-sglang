@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import traceback
 from typing import List, Optional, Tuple
 
@@ -14,6 +15,7 @@ from mini_sglang.managers.io_struct import (
     AbortReq,
     BatchTokenIDOut,
     FlushCacheReqInput,
+    FlushCacheReqOutput,
     TokenizedGenerateReqInput,
 )
 from mini_sglang.managers.model_runner import ModelRunner
@@ -55,6 +57,7 @@ class Scheduler:
         self.device = server_args.device
 
         self.forward_ct = 0
+        self.decode_forward_ct = 0
 
         torch.cuda.set_device(gpu_id)
 
@@ -245,8 +248,25 @@ class Scheduler:
                 req.to_abort = True
 
     def handle_flush_cache(self, req: FlushCacheReqInput):
-        # TODO
-        pass
+        if len(self.waiting_queue) == 0 and self.running_batch.is_empty():
+            self.cur_batch = None
+            self.last_batch = None
+            self.tree_cache.reset()
+
+            self.req_to_token_pool.clear()
+            self.page_allocator.clear()
+            torch.cuda.empty_cache()
+            self.forward_ct = 0
+            self.decode_forward_ct = 0
+
+            logger.info("Flush cache successfully.")
+            if_success = True
+        else:
+            logger.warning(
+                "Cannot flush cache when there are running or queued requests."
+            )
+            if_success = False
+        return FlushCacheReqOutput(success=if_success)
 
     def recv_requests(self) -> List:
         """
@@ -277,7 +297,9 @@ class Scheduler:
         process received requests using dispatcher
         """
         for recv_req in recv_reqs:
-            self._req_dispatcher(recv_req)
+            output = self._req_dispatcher(recv_req)
+            if output is not None:
+                self.send_to_tokenizer.send_pyobj(output)
 
     def get_new_batch_prefill(self) -> BatchInfo:
         self.policy.calc_priority(self.waiting_queue)
@@ -342,7 +364,6 @@ class Scheduler:
         return ret
 
     def run_batch(self, batch: BatchInfo):
-        self.print_batch(batch)
         self.forward_ct += 1
         return self.model_runner.forward_generate(batch)
 
@@ -360,6 +381,9 @@ class Scheduler:
         # Update the batch info with the output ids
         for i, req in enumerate(batch.reqs):
             req.token_ids.append(output_ids[i].item())
+
+        # print batch info
+        self.print_batch(batch)
 
         # check finish req
         finished_reqs_indices = []
@@ -389,6 +413,10 @@ class Scheduler:
             return
 
         if batch.forward_mode.is_extend():
+            self.decode_forward_ct = 0
+            self.decode_token_ct = 0
+            self.decode_start_time = time.time()
+
             extend_token_lens = 0
             prefix_token_lens = 0
             for req in batch.reqs:
@@ -399,8 +427,19 @@ class Scheduler:
                 f"Extend #BS: {batch.batch_size} #Tokens: {extend_token_lens + prefix_token_lens} #PrefixTokens: {prefix_token_lens} #ExtendTokens: {extend_token_lens}"
             )
         else:
-            total_tokens = sum(len(req) for req in batch.reqs)
-            logger.debug(f"Decode #BS: {batch.batch_size} #Tokens: {total_tokens}")
+            self.decode_forward_ct += 1
+            self.decode_token_ct += batch.batch_size
+            if self.decode_forward_ct % 64 == 0:
+                end_time = time.time()
+                elapsed = end_time - self.decode_start_time
+                tps = self.decode_token_ct / elapsed if elapsed > 0 else 0
+                tokens = self.decode_token_ct
+                self.decode_start_time = end_time
+                self.decode_token_ct = 0
+
+                logger.debug(
+                    f"Decode #BS: {batch.batch_size} #Tokens: {tokens} #TPS(token/s): {tps:.2f}"
+                )
 
         self.tree_cache.pretty_print()
 

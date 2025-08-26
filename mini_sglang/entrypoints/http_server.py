@@ -102,13 +102,27 @@ async def health() -> Response:
 @app.get("/get_model_info")
 async def get_model_info():
     """Get the model information."""
-    result = {"model_path": _global_state.tokenizer_manager.model_path}
+    result = {"model_path": _global_state.tokenizer_manager.server_args.model}
     return result
 
 
 @app.get("/get_server_info")
 async def get_server_info():
     return {**dataclasses.asdict(_global_state.tokenizer_manager.server_args)}
+
+
+@app.api_route("/flush_cache", methods=["GET", "POST"])
+async def flush_cache():
+    """Flush the radix cache."""
+    ret = await _global_state.tokenizer_manager.flush_cache()
+    return Response(
+        content=(
+            "Cache flushed.\nPlease check backend logs for more details. "
+            if ret.success
+            else "Failed to flush cache (When there are running or waiting requests, the operation will not be performed.)"
+        ),
+        status_code=200 if ret.success else HTTPStatus.BAD_REQUEST,
+    )
 
 
 @app.api_route("/generate", methods=["POST", "PUT"])
