@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 import torch
 
 from mini_sglang.layers.attention import Attention
 from mini_sglang.layers.attn.attn_backend import AttentionBackend
-from mini_sglang.managers.batch_info import BatchInfo
+from mini_sglang.managers.batch_info import BatchInfo, ForwardMode
 from mini_sglang.managers.model_runner import ModelRunner
 
 try:
@@ -38,6 +38,7 @@ class FlashAttn3Backend(AttentionBackend):
         self.req_to_token_pool = model_runner.req_to_token_pool
         self.kv_cache_pool = model_runner.kv_cache_pool
         self.page_size = model_runner.page_size
+        self.max_context_len = model_runner.model_config.max_context_len
 
     def init_forward_metadata(self, batch: BatchInfo):
         metadata = FlashAttn3Metadata()
@@ -149,3 +150,83 @@ class FlashAttn3Backend(AttentionBackend):
         )
 
         return o.view(-1, layer.num_heads * layer.head_dim)
+
+    def init_cuda_graph_state(self, max_bs: int):
+        """
+        Init tensors in FlashAttn3Metadata used in cuda graph capture.
+        """
+        self.decode_cuda_graph_vars = {
+            "cache_seqlens_int32": torch.ones(
+                max_bs, dtype=torch.int32, device=self.device
+            ),
+            "cu_seqlens_q": torch.arange(
+                0, max_bs + 1, dtype=torch.int32, device=self.device
+            ),
+            "cu_seqlens_k": torch.arange(
+                0, max_bs + 1, dtype=torch.int32, device=self.device
+            ),
+            "page_table": torch.zeros(
+                max_bs,
+                self.max_context_len,
+                dtype=torch.int32,
+                device=self.device,
+            ),
+        }
+        self.decode_cuda_graph_metadata: Dict[int, FlashAttn3Metadata] = {}
+
+    def init_forward_metadata_capture_cuda_graph(
+        self,
+        bs: int,
+        forward_mode: ForwardMode,
+    ):
+        """
+        Init Forward metadata for capturing CUDA graph
+        We don't care too much about the actual value being set, just make sure the shape and dtype are correct.
+        """
+        if forward_mode.is_extend():
+            raise NotImplementedError("FA3 does not support extend in CUDA graph yet.")
+
+        metadata = FlashAttn3Metadata()
+        metadata.cache_seqlens_int32 = self.decode_cuda_graph_vars[
+            "cache_seqlens_int32"
+        ][:bs]
+        metadata.max_seqlen_k = 1
+        metadata.max_seqlen_q = 1
+        metadata.cu_seqlens_q = self.decode_cuda_graph_vars["cu_seqlens_q"][: bs + 1]
+        metadata.cu_seqlens_k = self.decode_cuda_graph_vars["cu_seqlens_k"][: bs + 1]
+        metadata.page_table = self.decode_cuda_graph_vars["page_table"][:bs, :]
+
+        # store metadata
+        self.decode_cuda_graph_metadata[bs] = metadata
+        self.forward_metadata = metadata
+
+    def init_forward_metadata_replay_cuda_graph(
+        self,
+        bs: int,
+        req_pool_indices: torch.tensor,
+        seq_lens: torch.tensor,
+        forward_mode: ForwardMode,
+    ):
+        """
+        Init Forward metadata for replay CUDA graph
+        """
+
+        seq_lens = seq_lens[:bs]
+        req_pool_indices = req_pool_indices[:bs]
+
+        metadata = self.decode_cuda_graph_metadata[bs]
+
+        if forward_mode.is_decode():
+            metadata.cache_seqlens_int32.copy_(seq_lens.to(torch.int32))
+            metadata.max_seqlen_k = seq_lens.max().item()
+            metadata.cu_seqlens_k.copy_(
+                torch.nn.functional.pad(
+                    torch.cumsum(seq_lens, dim=0, dtype=torch.int32), (1, 0)
+                )
+            )
+            metadata.page_table[:, : metadata.max_seqlen_k].copy_(
+                self.req_to_token_pool.req_to_token[
+                    req_pool_indices, : metadata.max_seqlen_k
+                ]
+            )
+            # TODO: page_size > 1

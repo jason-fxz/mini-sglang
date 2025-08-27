@@ -7,12 +7,14 @@ import torch.distributed as dist
 from mini_sglang.layers.logits_processor import LogitsProcessorOutput
 from mini_sglang.layers.sampler import Sampler
 from mini_sglang.managers.batch_info import BatchInfo
+from mini_sglang.managers.cuda_graph_runner import CudaGraphRunner
 from mini_sglang.managers.sampling_params import SamplingParams
 from mini_sglang.managers.server_args import ServerArgs
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
 from mini_sglang.utils.loader import load_model
 from mini_sglang.utils.model_config import ModelConfig
+from mini_sglang.utils.utils import get_available_gpu_memory
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,12 @@ class ModelRunner:
             self.page_allocator = page_allocator
             self.req_to_token_pool = req_to_token_pool
             self.kv_cache_pool = kv_cache_pool
+
+        self.attn_backend = None
+        self.init_attn_backend()
+
+        self.init_cuda_graph()
+
         torch.set_default_device("cpu")
 
         self.sampler = Sampler()
@@ -66,8 +74,21 @@ class ModelRunner:
             eos_token_id=model_config.hf_config.eos_token_id
         )
 
-        self.attn_backend = None
-        self.init_attn_backend()
+    def init_cuda_graph(self):
+        self.cuda_graph_runner = None
+
+        if self.server_args.disable_cuda_graph:
+            logger.info("CUDA graph is disabled.")
+            return
+
+        before_mem = get_available_gpu_memory(self.gpu_id)
+        self.cuda_graph_runner = CudaGraphRunner(self)
+        after_mem = get_available_gpu_memory(self.gpu_id)
+
+        self.cuda_graph_mem_usage = before_mem - after_mem
+        logger.info(
+            f"Captured CUDA graphs. GPU memory usage: {self.cuda_graph_mem_usage:.2f} GB. available memory: {after_mem:.2f} GB"
+        )
 
     def init_attn_backend(self):
         if self.server_args.attention_backend == "torch":
@@ -169,8 +190,18 @@ class ModelRunner:
 
         return self.model.forward(batch.input_ids, batch.positions, batch)
 
+    def foward_cuda_graph(self, batch: BatchInfo) -> LogitsProcessorOutput:
+        batch.attn_backend = self.attn_backend
+        return self.cuda_graph_runner.replay(batch)
+
     def forward_generate(self, batch: BatchInfo) -> LogitsProcessorOutput:
-        if batch.forward_mode.is_extend():
+        can_run_cuda_graph = (
+            self.cuda_graph_runner is not None and self.cuda_graph_runner.can_run(batch)
+        )
+
+        if can_run_cuda_graph:
+            return self.foward_cuda_graph(batch)
+        elif batch.forward_mode.is_extend():
             return self.forward_extend(batch)
         elif batch.forward_mode.is_decode():
             return self.forward_decode(batch)

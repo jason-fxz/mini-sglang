@@ -23,10 +23,11 @@ class ServerArgs:
     port: int = 30000
 
     max_num_reqs: int = 1024
+    max_capture_bs: int = 128
 
     schedule_policy: str = "fcfs"
 
-    max_running_bs: int = 128
+    max_running_bs: int = 128  # to be discarded
 
     tp_size: int = 1
     device: str = "cuda"
@@ -39,6 +40,8 @@ class ServerArgs:
     profile: bool = False
 
     disable_radix_cache: bool = False
+
+    disable_cuda_graph: bool = False
 
     def __post_init__(self):
         self.model = os.path.expanduser(self.model)
@@ -141,6 +144,17 @@ class ServerArgs:
             type=int,
             default=ServerArgs.port,
             help="Port number for the server to listen on.",
+        )
+        parser.add_argument(
+            "--disable_cuda_graph",
+            action="store_true",
+            help="Disable the use of CUDA graphs for optimization.",
+        )
+        parser.add_argument(
+            "--max_capture_bs",
+            type=int,
+            default=ServerArgs.max_capture_bs,
+            help="Maximum batch size for CUDA graph capture.",
         )
 
     @classmethod

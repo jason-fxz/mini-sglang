@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import torch
 
 from mini_sglang.layers.attention import Attention
-from mini_sglang.managers.batch_info import BatchInfo
+from mini_sglang.managers.batch_info import BatchInfo, ForwardMode
 
 
 class AttentionBackend(ABC):
@@ -70,4 +70,26 @@ class AttentionBackend(ABC):
         save_kv_cache: bool = True,
     ):
         """Run a forward for extend."""
+        raise NotImplementedError()
+
+    def init_cuda_graph_state(self, max_bs: int):
+        """Init the global shared states for cuda graph."""
+        raise NotImplementedError()
+
+    def init_forward_metadata_capture_cuda_graph(
+        self,
+        bs: int,
+        forward_mode: ForwardMode,
+    ):
+        """Init the metadata for a forward pass for capturing a cuda graph."""
+        raise NotImplementedError()
+
+    def init_forward_metadata_replay_cuda_graph(
+        self,
+        bs: int,
+        req_pool_indices: torch.Tensor,
+        seq_lens: torch.Tensor,
+        forward_mode: ForwardMode,
+    ):
+        """Init the metadata for a forward pass for replaying a cuda graph."""
         raise NotImplementedError()

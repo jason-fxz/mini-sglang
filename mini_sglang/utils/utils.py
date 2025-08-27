@@ -12,6 +12,8 @@ import torch
 import torch.distributed as dist
 import zmq
 
+logger = logging.getLogger(__name__)
+
 
 def get_zmq_socket(
     context: zmq.Context, socket_type: zmq.SocketType, endpoint: str, bind: bool
@@ -180,3 +182,19 @@ def set_random_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def get_available_gpu_memory(gpu_id, empty_cache: bool = True):
+    num_gpus = torch.cuda.device_count()
+    assert gpu_id < num_gpus
+
+    if torch.cuda.current_device() != gpu_id:
+        logger.warning(
+            f"get_available_gpu_memory(): Current device is {torch.cuda.current_device()}, but gpu_id is {gpu_id}."
+        )
+
+    if empty_cache:
+        torch.cuda.empty_cache()
+    free_gpu_memory, _ = torch.cuda.mem_get_info(gpu_id)
+
+    return free_gpu_memory / (1 << 30)
