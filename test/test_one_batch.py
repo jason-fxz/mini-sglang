@@ -4,6 +4,7 @@ import time
 import uuid
 
 import pytest
+import torch
 from torch import distributed as dist
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -52,15 +53,18 @@ def print_batch_info(batch: BatchInfo):
     )
 
 
+@torch.inference_mode()
 def test_one_batch():
     model_path = os.path.expanduser("~/huggingface/Qwen3-0.6B/")
     server_args = ServerArgs(
         model=model_path,
         attention_backend="fa3",
-        gpu_memory_utilization=0.45,
+        gpu_memory_utilization=0.8,
         page_size=1,
     )
-    assert server_args.tp == 1, "Tensor parallelism is not supported in this script."
+    assert (
+        server_args.tp_size == 1
+    ), "Tensor parallelism is not supported in this script."
 
     model_config = ModelConfig(model_path)
 

@@ -443,7 +443,8 @@ class Scheduler:
 
         self.tree_cache.pretty_print()
 
-    def event_loop_normal(self):
+    @torch.inference_mode()
+    def event_loop_normal(self, prof: torch.profiler.profile = None):
         logger.info("Scheduler event loop started.")
         while True:
             recv_reqs = self.recv_requests()
@@ -498,11 +499,11 @@ def run_scheduler_process(
 
         if server_args.profile:
             with SafeProfiler(
-                record_shapes=False,
-                profile_memory=False,
+                record_shapes=True,
+                profile_memory=True,
                 with_stack=True,
-            ):
-                scheduler.event_loop_normal()
+            ) as prof:
+                scheduler.event_loop_normal(prof)
         else:
             scheduler.event_loop_normal()
 

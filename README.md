@@ -5,7 +5,7 @@ A lightweight SGLang implementation built from scratch.
 ## TODO
 
 - Known Issues
-  - GPU memory leak
+  - ~~GPU memory leak~~
   - GPU-CPU Synchronization issue
 
 - Basic Architecture

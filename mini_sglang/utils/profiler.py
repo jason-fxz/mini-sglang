@@ -52,6 +52,8 @@ class SafeProfiler:
                 tp = "" if dist.get_world_size() == 1 else f"_TP{dist.get_rank()}"
                 tracename = f"trace_{ts}{tp}.json"
                 tracepath = os.path.join(self.trace_dir, tracename)
+                # 确保路径存在
+                os.makedirs(self.trace_dir, exist_ok=True)
                 self.prof.export_chrome_trace(tracepath)
                 logger.info(f"[profiler] exported: {tracepath}")
         finally:
