@@ -81,7 +81,7 @@ def launch_server(
         app,
         host=server_args.host,
         port=server_args.port,
-        log_level=server_args.log_level,
+        log_level=server_args.log_level.lower(),
         timeout_keep_alive=5,
         loop="uvloop",
     )

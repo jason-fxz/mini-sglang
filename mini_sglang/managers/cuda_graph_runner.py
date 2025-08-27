@@ -67,6 +67,18 @@ class CudaGraphRunner:
 
         return graph, outputs
 
+    def get_capture_batch_sizes(self, max_bs: int):
+        if max_bs < 4:
+            graph_bs = [1, 2, 3][:max_bs]
+        elif max_bs < 8:
+            graph_bs = [1, 2, 4]
+            if max_bs != 4:
+                graph_bs.append(max_bs)
+        else:
+            graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+
+        return graph_bs
+
     @torch.inference_mode()
     def capture_cudagraph(self):
         max_bs = min(
@@ -85,7 +97,7 @@ class CudaGraphRunner:
             # attn metadata vars inputs
             self.model_runner.attn_backend.init_cuda_graph_state(max_bs)
 
-        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        self.graph_bs = self.get_capture_batch_sizes(max_bs)
         self.graphs = {}
         self.graph_pool = None
         self.output_buffers: Dict[int, LogitsProcessorOutput] = {}

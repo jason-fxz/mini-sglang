@@ -229,22 +229,27 @@ class RadixCache(BasePrefixCache):
                 self.protected_size -= len(node.value)
             node = node.parent
 
-    def _print_tree(self, node: TreeNode, depth: int = 0):
-        logger.info(
-            f"{"  " * depth}, {len(node.key)}, {node.key[:10]}, r={node.lock_ref}"
-        )
+    def _print_tree(self, node: TreeNode, depth: int = 0, use_logger: bool = False):
+        if use_logger:
+            logger.debug(
+                f"{"  " * depth}: {len(node.key)}, {node.key[:10]}, r={node.lock_ref}"
+            )
+        else:
+            print(
+                f'{"  " * depth}: {len(node.key)}, {node.key[:10]}, r={node.lock_ref}'
+            )
         for key, child in node.children.items():
-            self._print_tree(child, depth + 1)
+            self._print_tree(child, depth + 1, use_logger)
             assert key == self._get_child_key(
                 child.key
             ), f"{key} vs {self._get_child_key(child.key)}"
 
-    def pretty_print(self, print_if_changed: bool = True):
+    def pretty_print(self, print_if_changed: bool = True, use_logger: bool = False):
         """print the radix tree structure"""
         if print_if_changed and not self.changed:
             return
         self.changed = False
-        self._print_tree(self.root)
+        self._print_tree(self.root, use_logger=use_logger)
 
     def cache_unfinished_req(self, req: Req):
         """Cache the unfinished request into the radix tree."""

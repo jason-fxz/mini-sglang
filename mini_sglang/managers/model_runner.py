@@ -194,22 +194,25 @@ class ModelRunner:
         batch.attn_backend = self.attn_backend
         return self.cuda_graph_runner.replay(batch)
 
-    def forward_generate(self, batch: BatchInfo) -> LogitsProcessorOutput:
+    def forward_generate(self, batch: BatchInfo) -> Tuple[LogitsProcessorOutput, bool]:
         can_run_cuda_graph = (
             self.cuda_graph_runner is not None and self.cuda_graph_runner.can_run(batch)
         )
+        ret = None
 
         if can_run_cuda_graph:
-            return self.foward_cuda_graph(batch)
+            ret = self.foward_cuda_graph(batch)
         elif batch.forward_mode.is_extend():
-            return self.forward_extend(batch)
+            ret = self.forward_extend(batch)
         elif batch.forward_mode.is_decode():
-            return self.forward_decode(batch)
+            ret = self.forward_decode(batch)
         else:
             raise ValueError(
                 f"Unsupported forward mode: {batch.forward_mode}. "
                 "Only extend and decode modes are supported."
             )
+
+        return ret, can_run_cuda_graph
 
     def process_extend_result(self, batch: BatchInfo, logits: LogitsProcessorOutput):
         """

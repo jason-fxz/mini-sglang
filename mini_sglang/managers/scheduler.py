@@ -368,7 +368,7 @@ class Scheduler:
         return self.model_runner.forward_generate(batch)
 
     def process_batch_result(self, batch: BatchInfo, result: any):
-        logits = result
+        logits, run_cuda_graph = result
 
         temperatures = torch.tensor(
             [req.sampling_params.temperature for req in batch.reqs],
@@ -383,7 +383,7 @@ class Scheduler:
             req.token_ids.append(output_ids[i].item())
 
         # print batch info
-        self.print_batch(batch)
+        self.print_batch(batch, run_cuda_graph)
 
         # check finish req
         finished_reqs_indices = []
@@ -408,7 +408,7 @@ class Scheduler:
         # remove finished reqs
         batch.filter_reqs(finished_reqs_indices)
 
-    def print_batch(self, batch: BatchInfo):
+    def print_batch(self, batch: BatchInfo, run_cuda_graph: bool = False):
         if self.tp_rank != 0:
             return
 
@@ -423,8 +423,8 @@ class Scheduler:
                 extend_token_lens += len(req.token_ids) - len(req.prefix_indices)
                 prefix_token_lens += len(req.prefix_indices)
 
-            logger.debug(
-                f"Extend #BS: {batch.batch_size} #Tokens: {extend_token_lens + prefix_token_lens} #PrefixTokens: {prefix_token_lens} #ExtendTokens: {extend_token_lens}"
+            logger.info(
+                f"Extend #BS: {batch.batch_size}  #Tokens: {extend_token_lens + prefix_token_lens}  #PrefixTokens: {prefix_token_lens}  #ExtendTokens: {extend_token_lens}  #waiting-queue: {len(self.waiting_queue)}"
             )
         else:
             self.decode_forward_ct += 1
@@ -437,11 +437,11 @@ class Scheduler:
                 self.decode_start_time = end_time
                 self.decode_token_ct = 0
 
-                logger.debug(
-                    f"Decode #BS: {batch.batch_size} #Tokens: {tokens} #TPS(token/s): {tps:.2f}"
+                logger.info(
+                    f"Decode #BS: {batch.batch_size}  #Tokens: {tokens}  #waiting-queue: {len(self.waiting_queue)}  #TPS(token/s): {tps:.2f} #CUDA-Graph: {run_cuda_graph}"
                 )
 
-        self.tree_cache.pretty_print()
+        self.tree_cache.pretty_print(use_logger=True)
 
     @torch.inference_mode()
     def event_loop_normal(self, prof: torch.profiler.profile = None):
