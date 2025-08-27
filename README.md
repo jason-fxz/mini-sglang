@@ -2,6 +2,27 @@
 
 A lightweight SGLang implementation built from scratch.
 
+## Usage
+
+launch server:
+
+```bash
+python -m mini_sglang.launch_server --model ~/huggingface/Qwen3-0.6B --gpu_memory_utilization 0.9 --log_level DEBUG --attention_backend fa3
+```
+
+send request:
+
+```bash
+curl -X POST "http://localhost:30000/generate" -H "Content-Type: application/json" -d '{
+  "text": "The capital of France is",
+  "sampling_params": {
+      "temperature": 0,
+      "max_new_tokens": 1024
+  },
+  "stream": true
+}'
+```
+
 ## TODO
 
 - Known Issues
@@ -40,5 +61,5 @@ A lightweight SGLang implementation built from scratch.
 
 - Others
   - [x] Tensor Parallelism
-  - [ ] CUDA graph support for decode
+  - [x] CUDA graph support for decode
   - [ ] Overlap Scheduling
