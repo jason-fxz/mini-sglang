@@ -5,13 +5,28 @@ description = "A lightweight SGLang implementation built from scratch."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi[all]>=0.116.1",
     "psutil>=7.0.0",
     "setproctitle>=1.3.6",
-    "torch>=2.7.1",
+    "torch>=2.8.0",
     "transformers>=4.55.2",
     "zmq>=0.0.0",
 ]
 
+[project.optional-dependencies]
+fa3 = ["sgl-kernel>=0.3.6.post2"]
+all = ["mini-sglang[fa3]"]
+
 [tool.codespell]
 skip = "*.git,*.lock"
 ignore-words-list = "cann"
+
+
+[tool.setuptools]
+package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+include = ["mini_sglang*"]
+
+[dependency-groups]
+dev = ["pre-commit>=4.3.0", "pytest>=8.4.1"]
