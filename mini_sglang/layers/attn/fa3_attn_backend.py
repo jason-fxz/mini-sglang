@@ -224,9 +224,10 @@ class FlashAttn3Backend(AttentionBackend):
                     torch.cumsum(seq_lens, dim=0, dtype=torch.int32), (1, 0)
                 )
             )
-            metadata.page_table[:, : metadata.max_seqlen_k].copy_(
-                self.req_to_token_pool.req_to_token[
-                    req_pool_indices, : metadata.max_seqlen_k
-                ]
+            max_num_page = (
+                metadata.max_seqlen_k + self.page_size - 1
+            ) // self.page_size
+            metadata.page_table[:, :max_num_page].copy_(
+                self.req_to_token_pool.req_to_page[req_pool_indices, :max_num_page]
             )
             # TODO: page_size > 1
