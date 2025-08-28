@@ -433,7 +433,7 @@ class Scheduler:
                 end_time = time.time()
                 elapsed = end_time - self.decode_start_time
                 tps = self.decode_token_ct / elapsed if elapsed > 0 else 0
-                tokens = self.decode_token_ct
+                tokens = sum(len(req.token_ids) for req in batch.reqs)
                 self.decode_start_time = end_time
                 self.decode_token_ct = 0
 

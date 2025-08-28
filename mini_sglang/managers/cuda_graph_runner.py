@@ -62,6 +62,8 @@ class CudaGraphRunner:
         global _global_graph_memory_pool
         with torch.cuda.graph(graph, _global_graph_memory_pool):
             outputs = forward(batch.input_ids, batch.positions, batch)
+            self.next_token_logits[:bs] = outputs.next_token_logits
+            outputs = LogitsProcessorOutput(self.next_token_logits[:bs])
 
         _global_graph_memory_pool = graph.pool()
 
@@ -85,6 +87,7 @@ class CudaGraphRunner:
             self.model_runner.server_args.max_num_reqs,
             self.model_runner.server_args.max_capture_bs,
         )
+        vocab_size = self.model_runner.model_config.vocab_size
         # init graph_vars
         with torch.device("cuda"):
             # normal vars inputs
@@ -93,6 +96,10 @@ class CudaGraphRunner:
             self.out_cache_loc = torch.zeros(max_bs, dtype=torch.int32)
             self.seq_lens = torch.ones(max_bs, dtype=torch.int32)
             self.req_pool_indices = torch.zeros(max_bs, dtype=torch.int32)
+            # output vars
+            self.next_token_logits = torch.zeros(
+                max_bs, vocab_size, dtype=torch.float32
+            )
 
             # attn metadata vars inputs
             self.model_runner.attn_backend.init_cuda_graph_state(max_bs)
@@ -102,13 +109,13 @@ class CudaGraphRunner:
         self.graph_pool = None
         self.output_buffers: Dict[int, LogitsProcessorOutput] = {}
 
+        logger.info(f"Start capturing cuda graphs for batch sizes: {self.graph_bs}")
+
         capture_bs_range = (
             tqdm.tqdm(list(reversed(self.graph_bs)))
             if dist.get_rank() == 0
             else reversed(self.graph_bs)
         )
-
-        logger.info(f"Start capturing cuda graphs for batch sizes: {self.graph_bs}")
 
         for bs in capture_bs_range:
             if dist.get_rank() == 0:
@@ -142,6 +149,8 @@ class CudaGraphRunner:
         self.seq_lens[:raw_bs].copy_(batch.seq_lens)
         self.out_cache_loc[:raw_bs].copy_(batch.out_cache_loc)
         self.req_pool_indices[:raw_bs].copy_(batch.req_pool_indices)
+
+        # output
 
         # attn metadata inputs
         self.model_runner.attn_backend.init_forward_metadata_replay_cuda_graph(
