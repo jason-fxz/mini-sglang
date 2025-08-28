@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import logging
 import multiprocessing as mp
 import uuid
@@ -86,6 +87,16 @@ class Engine:
         loop = asyncio.get_event_loop()
         ret = loop.run_until_complete(self.tokenizer_manager.flush_cache())
         return ret
+
+    def get_server_info(self):
+        loop = asyncio.get_event_loop()
+        internal_states = loop.run_until_complete(
+            self.tokenizer_manager.get_internal_state()
+        )
+        return {
+            **dataclasses.asdict(self.tokenizer_manager.server_args),
+            "internal_states": [internal_states],
+        }
 
 
 def launch_engine_subprocess(server_args: ServerArgs, port_args: PortArgs):

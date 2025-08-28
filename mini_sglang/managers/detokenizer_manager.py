@@ -106,6 +106,9 @@ class DetokenizerManager:
             rids=obj.rids,
             finished_reasons=obj.finished_reasons,
             output_texts=output_texts,
+            prompt_tokens=obj.prompt_tokens,
+            completion_tokens=obj.completion_tokens,
+            cached_tokens=obj.cached_tokens,
         )
 
 

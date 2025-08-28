@@ -37,6 +37,8 @@ class KVCachePool(ABC):
         self.layer_num = layer_num
         self.device = device
 
+        self.mem_usage = 0.0
+
     @abstractmethod
     def get_key_buffer(self, layer: int) -> torch.Tensor:
         raise NotImplementedError()

@@ -108,7 +108,11 @@ async def get_model_info():
 
 @app.get("/get_server_info")
 async def get_server_info():
-    return {**dataclasses.asdict(_global_state.tokenizer_manager.server_args)}
+    internal_states = await _global_state.tokenizer_manager.get_internal_state()
+    return {
+        **dataclasses.asdict(_global_state.tokenizer_manager.server_args),
+        "internal_states": [internal_states],
+    }
 
 
 @app.api_route("/flush_cache", methods=["GET", "POST"])

@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import traceback
+from types import SimpleNamespace
 from typing import List, Optional, Tuple
 
 import setproctitle
@@ -16,6 +17,8 @@ from mini_sglang.managers.io_struct import (
     BatchTokenIDOut,
     FlushCacheReqInput,
     FlushCacheReqOutput,
+    GetInternalStateReqInput,
+    GetInternalStateReqOutput,
     TokenizedGenerateReqInput,
 )
 from mini_sglang.managers.model_runner import ModelRunner
@@ -76,6 +79,9 @@ class Scheduler:
             self.send_to_tokenizer = get_zmq_socket(
                 context, zmq.PUSH, port_args.tokenizer_input_ipc, False
             )
+        else:
+            self.send_to_tokenizer = SimpleNamespace(send_pyobj=lambda x: None)
+            self.send_to_detokenizer = SimpleNamespace(send_pyobj=lambda x: None)
 
         # init dist group
         self.init_dist_group(tp_rank, self.tp_size)
@@ -112,6 +118,7 @@ class Scheduler:
                 (TokenizedGenerateReqInput, self.handle_generate_request),
                 (FlushCacheReqInput, self.handle_flush_cache),
                 (AbortReq, self.handle_abort_request),
+                (GetInternalStateReqInput, self.handle_get_internal_state),
             ]
         )
 
@@ -144,67 +151,15 @@ class Scheduler:
                 page_size=self.page_size,
             )
 
-    # def calc_max_num_token(self) -> Tuple[int, int]:
-    #     free_size, total_size = torch.cuda.mem_get_info(
-    #         self.gpu_id
-    #     )  # free memory in bytes
-    #     # used_size = total_size - free_size
-    #     used_size = torch.cuda.memory_allocated(self.gpu_id)
-    #     GB = 1024 * 1024 * 1024
-    #     logger.info(
-    #         f"GPU {self.gpu_id} free size: {free_size/GB}, total size: {total_size/GB}, used size: {used_size/GB}"
-    #     )
-    #     num_kv_heads = self.model_config.num_kv_heads // self.tp_size
-
-    #     cell_size = (
-    #         num_kv_heads
-    #         * self.model_config.head_dim
-    #         * self.model_config.num_hidden_layers
-    #         * 2  # k + v
-    #         * self.model_config.kv_cache_dtype.itemsize
-    #     )
-    #     block_size = self.page_size * cell_size
-
-    #     num_kvcache_pages = (
-    #         int(total_size * self.server_args.gpu_memory_utilization - used_size)
-    #         // block_size
-    #     )
-
-    #     num_kvcache_tokens = num_kvcache_pages * self.page_size
-
-    #     return num_kvcache_pages, num_kvcache_tokens
-
-    # def init_memory_pool(
-    #     self,
-    #     max_num_reqs: Optional[int] = None,
-    #     max_total_tokens: Optional[int] = None,
-    # ):
-    #     num_pages, num_tokens = self.calc_max_num_token()
-    #     self.num_pages = num_pages
-    #     self.num_tokens = num_tokens
-
-    #     self.page_allocator = PageAllocator(
-    #         page_num=self.num_pages,
-    #         page_size=self.page_size,
-    #         device=self.device,
-    #     )
-
-    #     self.req_to_token_pool = ReqToTokenPool(
-    #         size=max_num_reqs,
-    #         max_tokens=max_total_tokens,
-    #         page_size=self.page_size,
-    #         device=self.device,
-    #     )
-
-    #     self.kv_cache_pool = MHAKVPool(
-    #         size=self.num_tokens,
-    #         page_size=self.page_size,
-    #         dtype=self.model_config.kv_cache_dtype,
-    #         head_num=self.model_config.num_kv_heads,
-    #         head_dim=self.model_config.head_dim,
-    #         layer_num=self.model_config.num_hidden_layers,
-    #         device=self.device,
-    #     )
+    def handle_get_internal_state(self, req: GetInternalStateReqInput):
+        ret = {}
+        ret["memory_usage"] = {
+            "weight": round(self.model_runner.weight_load_mem_usage, 2),
+            "kvcache": round(self.kv_cache_pool.mem_usage, 2),
+            "cuda_graph": round(self.model_runner.cuda_graph_mem_usage, 2),
+            "token_capacity": self.model_runner.num_tokens,
+        }
+        return GetInternalStateReqOutput(ret)
 
     def handle_generate_request(self, recv_req: TokenizedGenerateReqInput):
         # handle new request
@@ -333,6 +288,9 @@ class Scheduler:
             self.kv_cache_pool,
         )
 
+        for req in new_batch.reqs:
+            req.num_cached_tokens = len(req.prefix_indices)
+
         new_batch.prepare_for_extend()
         return new_batch
 
@@ -401,6 +359,9 @@ class Scheduler:
                 rids=[req.rid for req in batch.reqs],
                 finished_reasons=[req.finish_reason for req in batch.reqs],
                 output_ids=[req.last_token_id for req in batch.reqs],
+                prompt_tokens=[req.num_prompt_tokens for req in batch.reqs],
+                completion_tokens=[req.num_completion_tokens for req in batch.reqs],
+                cached_tokens=[req.num_cached_tokens for req in batch.reqs],
             )
 
             self.send_to_detokenizer.send_pyobj(batch_out)

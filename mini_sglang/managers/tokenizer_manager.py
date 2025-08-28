@@ -17,6 +17,8 @@ from mini_sglang.managers.io_struct import (
     FlushCacheReqInput,
     FlushCacheReqOutput,
     GenerateReqInput,
+    GetInternalStateReqInput,
+    GetInternalStateReqOutput,
     TokenizedGenerateReqInput,
 )
 from mini_sglang.managers.sampling_params import SamplingParams
@@ -67,12 +69,17 @@ class TokenizerManager:
         self.rid_to_state: Dict[str, ReqState] = {}
 
         self.flush_cache_communicator = _Communicator(self.send_to_scheduler)
+        self.get_internal_state_communicator = _Communicator(self.send_to_scheduler)
 
         self._req_dispatcher = TypeBasedDispatcher(
             [
                 (BatchStrOut, self._handle_batch_output),
                 (AbortReq, self._handle_abort_req),
                 (FlushCacheReqOutput, self.flush_cache_communicator.handle_recv),
+                (
+                    GetInternalStateReqOutput,
+                    self.get_internal_state_communicator.handle_recv,
+                ),
             ]
         )
 
@@ -227,6 +234,9 @@ class TokenizerManager:
                     if recv_obj.finished_reasons[i]
                     else None
                 ),
+                "prompt_tokens": recv_obj.prompt_tokens[i],
+                "completion_tokens": recv_obj.completion_tokens[i],
+                "cached_tokens": recv_obj.cached_tokens[i],
             }
 
             # append text
@@ -240,6 +250,7 @@ class TokenizerManager:
             state.finished = recv_obj.finished_reasons[i] is not None
             if state.finished:
                 state.finished_time = time.time()
+                meta_info["e2e_latency"] = state.finished_time - state.created_time
                 del self.rid_to_state[rid]
 
             state.out_list.append(out_dict)
@@ -270,6 +281,12 @@ class TokenizerManager:
 
         async for response in self._wait_one_response(obj, state, request):
             yield response
+
+    async def get_internal_state(self) -> Dict[Any, Any]:
+        self.auto_create_event_loop()
+        return await self.get_internal_state_communicator.send(
+            GetInternalStateReqInput()
+        )
 
 
 class _Communicator:

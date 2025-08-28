@@ -39,6 +39,11 @@ class BatchTokenIDOut:
     # The output token ids
     output_ids: List[int]
 
+    # Token counts
+    prompt_tokens: List[int]
+    completion_tokens: List[int]
+    cached_tokens: List[int]
+
 
 @dataclass
 class AbortReq:
@@ -77,3 +82,18 @@ class BatchStrOut:
     finished_reasons: List[BaseFinishReason]
     # The output texts
     output_texts: List[str]
+
+    # Token counts
+    prompt_tokens: List[int]
+    completion_tokens: List[int]
+    cached_tokens: List[int]
+
+
+@dataclass
+class GetInternalStateReqInput:
+    pass
+
+
+@dataclass
+class GetInternalStateReqOutput:
+    internal_state: Dict[Any, Any]

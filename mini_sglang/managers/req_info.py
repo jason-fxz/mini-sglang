@@ -84,6 +84,7 @@ class Req:
         self.sampling_params = sampling_params
         self.req_pool_idx = req_pool_idx
 
+        self.num_cached_tokens = 0  # upd by get_new_batch_prefill
         self.finish_reason = None  # upd
         self.last_node = None  # radix tree last node
 
@@ -103,6 +104,10 @@ class Req:
     @property
     def num_tokens(self) -> int:
         return len(self.token_ids)
+
+    @property
+    def num_completion_tokens(self) -> int:
+        return self.num_tokens - self.num_prompt_tokens
 
     def __len__(self):
         return self.num_tokens

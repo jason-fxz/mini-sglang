@@ -43,7 +43,7 @@ class ModelRunner:
 
         torch.set_default_dtype(model_config.hf_config.torch_dtype)
         torch.set_default_device(self.device)
-        self.model = load_model(model_config)
+        self.init_load_model(model_config)
         if (
             page_allocator is None
             and req_to_token_pool is None
@@ -74,8 +74,19 @@ class ModelRunner:
             eos_token_id=model_config.hf_config.eos_token_id
         )
 
+    def init_load_model(self, model_config: ModelConfig):
+        before_mem = get_available_gpu_memory(self.gpu_id)
+        self.model = load_model(model_config)
+        after_mem = get_available_gpu_memory(self.gpu_id)
+
+        self.weight_load_mem_usage = before_mem - after_mem
+        logger.info(
+            f"Model loaded. GPU memory usage: {self.weight_load_mem_usage:.2f} GB. available memory: {after_mem:.2f} GB"
+        )
+
     def init_cuda_graph(self):
         self.cuda_graph_runner = None
+        self.cuda_graph_mem_usage = 0.0
 
         if self.server_args.disable_cuda_graph:
             logger.info("CUDA graph is disabled.")
