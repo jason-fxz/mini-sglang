@@ -108,7 +108,9 @@ async def get_model_info():
 
 @app.get("/get_server_info")
 async def get_server_info():
-    internal_states = await _global_state.tokenizer_manager.get_internal_state()
+    internal_states = (
+        await _global_state.tokenizer_manager.get_internal_state()
+    ).internal_state
     return {
         **dataclasses.asdict(_global_state.tokenizer_manager.server_args),
         "internal_states": [internal_states],

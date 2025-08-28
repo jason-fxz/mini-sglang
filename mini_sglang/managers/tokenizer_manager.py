@@ -282,7 +282,7 @@ class TokenizerManager:
         async for response in self._wait_one_response(obj, state, request):
             yield response
 
-    async def get_internal_state(self) -> Dict[Any, Any]:
+    async def get_internal_state(self) -> GetInternalStateReqOutput:
         self.auto_create_event_loop()
         return await self.get_internal_state_communicator.send(
             GetInternalStateReqInput()

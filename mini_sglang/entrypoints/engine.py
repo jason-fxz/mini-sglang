@@ -92,7 +92,7 @@ class Engine:
         loop = asyncio.get_event_loop()
         internal_states = loop.run_until_complete(
             self.tokenizer_manager.get_internal_state()
-        )
+        ).internal_state
         return {
             **dataclasses.asdict(self.tokenizer_manager.server_args),
             "internal_states": [internal_states],

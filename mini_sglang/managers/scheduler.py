@@ -61,6 +61,7 @@ class Scheduler:
 
         self.forward_ct = 0
         self.decode_forward_ct = 0
+        self.last_tps = 0.0
 
         torch.cuda.set_device(gpu_id)
 
@@ -95,6 +96,7 @@ class Scheduler:
             tp_rank=tp_rank,
             tp_size=self.tp_size,
         )
+        self.max_total_num_tokens = self.model_runner.num_tokens
 
         self.req_to_token_pool = self.model_runner.req_to_token_pool
         self.page_allocator = self.model_runner.page_allocator
@@ -157,8 +159,9 @@ class Scheduler:
             "weight": round(self.model_runner.weight_load_mem_usage, 2),
             "kvcache": round(self.kv_cache_pool.mem_usage, 2),
             "cuda_graph": round(self.model_runner.cuda_graph_mem_usage, 2),
-            "token_capacity": self.model_runner.num_tokens,
+            "token_capacity": self.max_total_num_tokens,
         }
+        ret["last_gen_throughput"] = self.last_tps
         return GetInternalStateReqOutput(ret)
 
     def handle_generate_request(self, recv_req: TokenizedGenerateReqInput):
@@ -222,6 +225,23 @@ class Scheduler:
             )
             if_success = False
         return FlushCacheReqOutput(success=if_success)
+
+    def check_memory(self):
+        available_size = self.page_allocator.available_size()
+        evictable_size = self.tree_cache.evictable_size()
+        protected_size = self.tree_cache.protected_size()
+
+        if protected_size != 0:
+            msg = f"tree_cache protected_size should be 0 When there is no running req, {protected_size=}"
+            raise RuntimeError(msg)
+
+        if available_size + evictable_size != self.max_total_num_tokens:
+            msg = f"page_allocator memory leak detected! {self.max_total_num_tokens=}, {available_size=}, {evictable_size=}, {protected_size=}"
+            raise RuntimeError(msg)
+
+        if len(self.req_to_token_pool.free_slots) != self.req_to_token_pool.size:
+            msg = f"req_to_token_pool memory leak detected! total_size={self.req_to_token_pool.size}, available_size={len(self.req_to_token_pool.free_slots)}"
+            raise RuntimeError(msg)
 
     def recv_requests(self) -> List:
         """
@@ -397,9 +417,10 @@ class Scheduler:
                 tokens = sum(len(req.token_ids) for req in batch.reqs)
                 self.decode_start_time = end_time
                 self.decode_token_ct = 0
+                self.last_tps = tps
 
                 logger.info(
-                    f"Decode #BS: {batch.batch_size}  #Tokens: {tokens}  #waiting-queue: {len(self.waiting_queue)}  #TPS(token/s): {tps:.2f} #CUDA-Graph: {run_cuda_graph}"
+                    f"Decode #BS: {batch.batch_size}  #Tokens: {tokens}  #TPS(token/s): {tps:.2f}  #CUDA-Graph: {run_cuda_graph}  #waiting-queue: {len(self.waiting_queue)}"
                 )
 
         self.tree_cache.pretty_print(use_logger=True)
@@ -418,7 +439,7 @@ class Scheduler:
                 result = self.run_batch(batch)
                 self.process_batch_result(batch, result)
             else:
-                pass
+                self.check_memory()
 
             self.last_batch = batch
 
