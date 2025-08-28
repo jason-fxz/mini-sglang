@@ -179,7 +179,7 @@ class PageAllocator:
         self.clear()
 
     def available_size(self):
-        return len(self.free_page)
+        return len(self.free_page) * self.page_size
 
     def alloc(self, num: int):
         """

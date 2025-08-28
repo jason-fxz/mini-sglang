@@ -37,3 +37,9 @@ class BasePrefixCache(ABC):
     @abstractmethod
     def dec_lock_ref(self, node: Any):
         pass
+
+    def protected_size(self):
+        return 0
+
+    def evictable_size(self):
+        return 0

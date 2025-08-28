@@ -4,6 +4,7 @@ Radix Tree Cache Implementation
 
 from __future__ import annotations
 
+import heapq
 import logging
 from collections import defaultdict
 from typing import List, Optional, Tuple
@@ -44,6 +45,12 @@ class TreeNode:
     def update_access_time(self):
         self.last_access_time = TreeNode.time_tick()
 
+    def __repr__(self):
+        return f"TreeNode(id={self.id}, key={self.key[:10]}..., value_len={len(self.value) if self.value is not None else 0}, lock_ref={self.lock_ref}, last_access_time={self.last_access_time}, num_children={len(self.children)})"
+
+    def is_leaf(self):
+        return len(self.children) == 0
+
 
 class RadixCache(BasePrefixCache):
     def __init__(
@@ -72,8 +79,8 @@ class RadixCache(BasePrefixCache):
         self.root.key = []
         self.root.value = []
         self.root.lock_ref = 1
-        self.evictable_size = 0  # size of unlocked nodes
-        self.protected_size = 0  # size of locked nodes
+        self._evictable_size = 0  # size of unlocked nodes
+        self._protected_size = 0  # size of locked nodes
 
     def _get_child_key(self, key: List[int]) -> Tuple[int]:
         return tuple(key[: self.page_size])
@@ -200,6 +207,7 @@ class RadixCache(BasePrefixCache):
             new_node.key = key
             new_node.value = value
             node.children[child_key] = new_node
+            self._evictable_size += len(value)
             # print("node:", node.key, "add child:", new_node.key)
 
         assert total_prefix_length % self.page_size == 0
@@ -212,8 +220,8 @@ class RadixCache(BasePrefixCache):
 
         while node != self.root:
             if node.lock_ref == 0:
-                self.evictable_size -= len(node.value)
-                self.protected_size += len(node.value)
+                self._evictable_size -= len(node.value)
+                self._protected_size += len(node.value)
             node.lock_ref += 1
             node = node.parent
 
@@ -225,8 +233,8 @@ class RadixCache(BasePrefixCache):
         while node != self.root:
             node.lock_ref -= 1
             if node.lock_ref == 0:
-                self.evictable_size += len(node.value)
-                self.protected_size -= len(node.value)
+                self._evictable_size += len(node.value)
+                self._protected_size -= len(node.value)
             node = node.parent
 
     def _print_tree(self, node: TreeNode, depth: int = 0, use_logger: bool = False):
@@ -250,6 +258,14 @@ class RadixCache(BasePrefixCache):
             return
         self.changed = False
         self._print_tree(self.root, use_logger=use_logger)
+        if use_logger:
+            logger.debug(
+                f"Total size: {self._evictable_size + self._protected_size}, Evictable size: {self._evictable_size}, Protected size: {self._protected_size}"
+            )
+        else:
+            print(
+                f"Total size: {self._evictable_size + self._protected_size}, Evictable size: {self._evictable_size}, Protected size: {self._protected_size}"
+            )
 
     def cache_unfinished_req(self, req: Req):
         """Cache the unfinished request into the radix tree."""
@@ -348,6 +364,54 @@ class RadixCache(BasePrefixCache):
         self.req_to_token_pool.free(req.req_pool_idx)
         self.dec_lock_ref(req.last_node)
 
+    def evict(self, num_tokens: int):
+        leaves = self._collect_leaves()
+        heapq.heapify(leaves)
+
+        num_evicted = 0
+        while num_evicted < num_tokens and len(leaves):
+            x = heapq.heappop(leaves)
+
+            if x == self.root:
+                break
+            if x.lock_ref > 0:  # skip locked nodes
+                continue
+
+            if self.page_allocator:
+                self.page_allocator.free(x.value)
+            num_evicted += len(x.value)
+            self._delete_leaf(x)
+
+            if len(x.parent.children) == 0:
+                heapq.heappush(leaves, x.parent)
+
+    def evictable_size(self):
+        return self._evictable_size
+
+    def protected_size(self):
+        return self._protected_size
+
+    def _collect_leaves(self):
+        leaves = []
+        stack = [self.root]
+
+        while stack:
+            cur_node = stack.pop()
+            if cur_node.is_leaf():
+                leaves.append(cur_node)
+            else:
+                stack.extend(cur_node.children.values())
+
+        return leaves
+
+    def _delete_leaf(self, node: TreeNode):
+        assert node.is_leaf(), f"{node} is not a leaf node"
+        for k, v in node.parent.children.items():
+            if v == node:
+                break
+        del node.parent.children[k]
+        self._evictable_size -= len(node.key)
+
 
 if __name__ == "__main__":
     tree = RadixCache(None, None, None, 1)
@@ -356,4 +420,7 @@ if __name__ == "__main__":
     tree.insert("Hello World!")
 
     tree.insert("sglang is good")
-    tree.pretty_print()
+    tree.pretty_print(False)
+
+    tree.evict(8)
+    tree.pretty_print(False)
