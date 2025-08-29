@@ -17,7 +17,7 @@ from typing import List, Optional
 class ServerArgs:
     model: str
     page_size: int = 1
-    attention_backend: str = "torch"
+    attention_backend: str = "fa3"
 
     host: str = "localhost"
     port: int = 30000
@@ -25,9 +25,7 @@ class ServerArgs:
     max_num_reqs: int = 1024
     max_capture_bs: int = 128
 
-    schedule_policy: str = "fcfs"
-
-    max_running_bs: int = 128  # to be discarded
+    schedule_policy: str = "lpm"
 
     tp_size: int = 1
     device: str = "cuda"
@@ -43,11 +41,20 @@ class ServerArgs:
 
     disable_cuda_graph: bool = False
 
+    schedule_conservativeness: float = 1.0
+    max_prefill_tokens: int = 16384
+
     def __post_init__(self):
         self.model = os.path.expanduser(self.model)
         assert os.path.isdir(self.model)
         if self.random_seed is None:
             self.random_seed = random.randint(0, 1 << 30)
+
+        if self.disable_radix_cache:
+            assert self.schedule_policy in ["fcfs", "lof", "random"], (
+                f"Schedule policy {self.schedule_policy} is not compatible with "
+                "--disable_radix_cache. Please choose from ['fcfs', 'lof', 'random']"
+            )
 
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser):
@@ -97,12 +104,6 @@ class ServerArgs:
             default=ServerArgs.schedule_policy,
             choices=["fcfs", "lof", "random", "lpm", "dfs-weight"],
             help="Scheduling policy to use.",
-        )
-        parser.add_argument(
-            "--max_running_bs",
-            type=int,
-            default=ServerArgs.max_running_bs,
-            help="Maximum batch size for running requests.",
         )
         parser.add_argument(
             "--log_level",
@@ -155,6 +156,18 @@ class ServerArgs:
             type=int,
             default=ServerArgs.max_capture_bs,
             help="Maximum batch size for CUDA graph capture.",
+        )
+        parser.add_argument(
+            "--schedule-conservativeness",
+            type=float,
+            default=ServerArgs.schedule_conservativeness,
+            help="How conservative the schedule policy is. A larger value means more conservative scheduling. Use a larger value if you see requests being retracted frequently.",
+        )
+        parser.add_argument(
+            "--max_prefill_tokens",
+            type=int,
+            default=ServerArgs.max_prefill_tokens,
+            help="Maximum number of tokens to prefill for each batch.",
         )
 
     @classmethod

@@ -43,3 +43,6 @@ class BasePrefixCache(ABC):
 
     def evictable_size(self):
         return 0
+
+    def evict(self, num_tokens: int):
+        pass

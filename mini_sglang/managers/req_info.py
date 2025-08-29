@@ -84,6 +84,7 @@ class Req:
         self.sampling_params = sampling_params
         self.req_pool_idx = req_pool_idx
 
+        # self.is_retracted = False # upd by retract
         self.num_cached_tokens = 0  # upd by get_new_batch_prefill
         self.finish_reason = None  # upd
         self.last_node = None  # radix tree last node
@@ -145,3 +146,11 @@ class Req:
         if match_result is not None:
             self.last_node = match_result.last_node
             self.prefix_indices = match_result.match_indices
+
+    def reset_for_retract(self):
+        self.status = ReqStatus.WAITING
+        self.req_pool_idx = -1
+        # self.is_retracted = True
+        self.finish_reason = None
+        self.last_node = None
+        self.prefix_indices: torch.tensor = torch.tensor([], dtype=torch.int32)

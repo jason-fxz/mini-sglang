@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from enum import Enum
+from contextlib import contextmanager
+from enum import Enum, auto
 from typing import Dict, List, Optional, Set
 
 import torch
 
 from mini_sglang.managers.req_info import Req
+from mini_sglang.managers.sampling_params import SamplingParams
+from mini_sglang.managers.scheduler import BatchInfo
 from mini_sglang.mem_cache.base_cache import BasePrefixCache
 from mini_sglang.mem_cache.radix_cache import RadixCache, TreeNode
+from mini_sglang.mem_cache.token2kv import PageAllocator
 
 IN_BATCH_PREFIX_CACHING_CHECK_THRESHOLD = int(32)
 IN_BATCH_PREFIX_CACHING_DEPRIORITIZE_THRESHOLD = int(32)
@@ -142,3 +146,87 @@ class SchedulerPolicy:
                     )
 
         return temporary_deprioritized
+
+
+class AddReqResult(Enum):
+    CONTINUE = auto()  # Continue to add requests
+    NO_TOKEN = auto()  # No token left
+    OTHER = auto()  # Other reasons to stop adding requests
+
+
+class PrefillAdder:
+
+    def __init__(
+        self,
+        page_size: int,
+        tree_cache: BasePrefixCache,
+        page_allocator: PageAllocator,
+        new_token_ratio: float,
+        max_input_tokens: int,
+        running_batch: Optional[BatchInfo] = None,
+    ):
+        self.page_size = page_size
+        self.tree_cache = tree_cache
+        self.page_allocator = page_allocator
+
+        self.new_token_ratio = new_token_ratio
+        self.rem_input_tokens = max_input_tokens
+        self.used_total_tokens = 0
+
+        if running_batch:
+            self.used_total_tokens = sum(
+                [
+                    (r.sampling_params.max_new_tokens - r.num_completion_tokens)
+                    * new_token_ratio
+                    for r in running_batch.reqs
+                ]
+            )
+
+        self.can_run_reqs: List[Req] = []
+
+    @property
+    def rem_total_tokens(self):
+        available_and_evictable = (
+            self.page_allocator.available_size() + self.tree_cache.evictable_size()
+        )
+        return available_and_evictable - self.used_total_tokens
+
+    @contextmanager
+    def _lock_node(self, last_node: TreeNode):
+        try:
+            self.tree_cache.inc_lock_ref(last_node)
+            yield None
+        finally:
+            self.tree_cache.dec_lock_ref(last_node)
+
+    def add_one_req(self, req: Req) -> AddReqResult:
+        prefix_len = len(req.prefix_indices)
+        total_tokens = (
+            req.num_tokens
+            - prefix_len
+            + (req.sampling_params.max_new_tokens - req.num_completion_tokens)
+            * self.new_token_ratio
+        )
+
+        input_tokens = req.num_tokens - prefix_len
+
+        if total_tokens > self.rem_total_tokens:
+            return AddReqResult.NO_TOKEN
+
+        if input_tokens > self.rem_input_tokens and len(self.cun_run_list) != 0:
+            return AddReqResult.OTHER
+
+        with self._lock_node(req.last_node):
+            if total_tokens > self.rem_total_tokens:
+                return AddReqResult.NO_TOKEN
+
+            if input_tokens > self.rem_input_tokens and len(self.cun_run_list) != 0:
+                return AddReqResult.OTHER
+
+            # ok
+            self.can_run_reqs.append(req)
+            self.tree_cache.inc_lock_ref(req.last_node)
+            self.rem_input_tokens -= input_tokens
+            self.used_total_tokens += total_tokens
+
+        return AddReqResult.CONTINUE

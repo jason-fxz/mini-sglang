@@ -23,12 +23,17 @@ from mini_sglang.managers.io_struct import (
 )
 from mini_sglang.managers.model_runner import ModelRunner
 from mini_sglang.managers.req_info import Req
-from mini_sglang.managers.scheduler_policy import SchedulerPolicy
+from mini_sglang.managers.scheduler_policy import (
+    AddReqResult,
+    PrefillAdder,
+    SchedulerPolicy,
+)
 from mini_sglang.managers.server_args import PortArgs, ServerArgs
 from mini_sglang.mem_cache.chunk_cache import ChunkCache
 from mini_sglang.mem_cache.radix_cache import RadixCache
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
+from mini_sglang.utils.global_vars import global_vars
 from mini_sglang.utils.model_config import ModelConfig
 from mini_sglang.utils.profiler import SafeProfiler
 from mini_sglang.utils.utils import (
@@ -59,9 +64,11 @@ class Scheduler:
         self.page_size = server_args.page_size
         self.device = server_args.device
 
+        # Log some info
         self.forward_ct = 0
         self.decode_forward_ct = 0
         self.last_tps = 0.0
+        self.total_retracted_reqs = 0
 
         torch.cuda.set_device(gpu_id)
 
@@ -125,8 +132,29 @@ class Scheduler:
         )
 
         # scheduler policy
-        self.scheduler_policy = server_args.schedule_policy
+        self.init_schedule_policy()
+
+    def init_schedule_policy(self):
+        self.scheduler_policy = self.server_args.schedule_policy
         self.policy = SchedulerPolicy(self.scheduler_policy, self.tree_cache)
+
+        # runtime constraints for schedule
+        assert (
+            self.server_args.schedule_conservativeness >= 0
+        ), "Invalid schedule_conservativeness"
+        self.init_new_token_ratio = min(
+            global_vars.default_init_new_token_ratio
+            * self.server_args.schedule_conservativeness,
+            1.0,
+        )
+        self.min_new_token_ratio = min(
+            self.init_new_token_ratio * global_vars.default_min_new_token_ratio_factor,
+            1.0,
+        )
+        self.new_token_ratio_decay = (
+            self.init_new_token_ratio - self.min_new_token_ratio
+        ) / global_vars.default_new_token_ratio_decay_steps
+        self.new_token_ratio = self.init_new_token_ratio
 
     def init_dist_group(self, tp_rank: int, tp_size: int):
         os.environ["MASTER_ADDR"] = "localhost"
@@ -279,33 +307,42 @@ class Scheduler:
     def get_new_batch_prefill(self) -> BatchInfo:
         self.policy.calc_priority(self.waiting_queue)
 
-        can_run_reqs: List[Req] = []
-
+        adder = PrefillAdder(
+            page_size=self.page_size,
+            tree_cache=self.tree_cache,
+            page_allocator=self.page_allocator,
+            new_token_ratio=self.new_token_ratio,
+            max_input_tokens=self.server_args.max_prefill_tokens,
+            running_batch=self.running_batch,
+        )
         for req in self.waiting_queue:
-            # TODO schedule policy
-            if self.running_batch.batch_size >= self.server_args.max_running_bs:
+            if (
+                len(adder.can_run_reqs) + self.running_batch.batch_size
+                >= self.server_args.max_num_reqs
+            ):
                 break
 
             if not self.server_args.disable_radix_cache:
                 req.calc_prefix(self.tree_cache)
 
-            # add lock_ref
-            self.tree_cache.inc_lock_ref(req.last_node)
-            can_run_reqs.append(req)
+            res = adder.add_one_req(req)
+            if res == AddReqResult.NO_TOKEN:
+                break
 
         # update waiting queue
-        if len(can_run_reqs) == 0:
+        if len(adder.can_run_reqs) == 0:
             return None
 
         self.waiting_queue = [
-            x for x in self.waiting_queue if x not in set(can_run_reqs)
+            x for x in self.waiting_queue if x not in set(adder.can_run_reqs)
         ]
 
         new_batch = BatchInfo.init_new(
-            can_run_reqs,
+            adder.can_run_reqs,
             self.req_to_token_pool,
             self.page_allocator,
             self.kv_cache_pool,
+            self.tree_cache,
         )
 
         for req in new_batch.reqs:
@@ -315,6 +352,27 @@ class Scheduler:
         return new_batch
 
     def update_running_batch(self, batch: BatchInfo):
+        # check if decode OOM
+        if not batch.check_decode_mem():
+            old_ratio = self.new_token_ratio
+
+            retracted_reqs, new_ratio = batch.retract_decode()
+            self.new_token_ratio = new_ratio
+
+            logger.info(
+                f"KV cache is full. Retract {len(retracted_reqs)} requests. "
+                f"#new_token_ratio: {old_ratio:.4f} -> {new_ratio:.4f}"
+            )
+
+            self.waiting_queue.extend(retracted_reqs)
+            self.total_retracted_reqs = len(retracted_reqs)
+
+        else:
+            self.new_token_ratio = max(
+                self.new_token_ratio - self.new_token_ratio_decay,
+                self.min_new_token_ratio,
+            )
+
         batch.prepare_for_decode()
         return batch
 
@@ -389,6 +447,13 @@ class Scheduler:
         # remove finished reqs
         batch.filter_reqs(finished_reqs_indices)
 
+    def _get_token_info(self):
+        available_size = self.page_allocator.available_size()
+        evictable_size = self.tree_cache.evictable_size()
+        num_used = self.max_total_num_tokens - (available_size + evictable_size)
+        token_usage = num_used / self.max_total_num_tokens
+        return num_used, token_usage, available_size, evictable_size
+
     def print_batch(self, batch: BatchInfo, run_cuda_graph: bool = False):
         if self.tp_rank != 0:
             return
@@ -410,20 +475,22 @@ class Scheduler:
         else:
             self.decode_forward_ct += 1
             self.decode_token_ct += batch.batch_size
-            if self.decode_forward_ct % 64 == 0:
+            if self.decode_forward_ct % 64 == 1:
                 end_time = time.time()
                 elapsed = end_time - self.decode_start_time
                 tps = self.decode_token_ct / elapsed if elapsed > 0 else 0
-                tokens = sum(len(req.token_ids) for req in batch.reqs)
+                tokens, token_usage, available_size, evictable_size = (
+                    self._get_token_info()
+                )
                 self.decode_start_time = end_time
                 self.decode_token_ct = 0
                 self.last_tps = tps
 
                 logger.info(
-                    f"Decode #BS: {batch.batch_size}  #Tokens: {tokens}  #TPS(token/s): {tps:.2f}  #CUDA-Graph: {run_cuda_graph}  #waiting-queue: {len(self.waiting_queue)}"
+                    f"Decode #BS: {batch.batch_size}  #Tokens: {tokens} {available_size} {evictable_size} ({token_usage:.2f})  #TPS(token/s): {tps:.2f}  #CUDA-Graph: {run_cuda_graph}  #waiting-queue: {len(self.waiting_queue)}  #new-token-ratio: {self.new_token_ratio:.3f}"
                 )
 
-        self.tree_cache.pretty_print(use_logger=True)
+        # self.tree_cache.pretty_print(use_logger=True)
 
     @torch.inference_mode()
     def event_loop_normal(self, prof: torch.profiler.profile = None):

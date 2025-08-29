@@ -7,7 +7,7 @@ A lightweight SGLang implementation built from scratch.
 launch server:
 
 ```bash
-python -m mini_sglang.launch_server --model ~/huggingface/Qwen3-0.6B --gpu_memory_utilization 0.9 --log_level INFO --attention_backend fa3
+python -m mini_sglang.launch_server --model ~/huggingface/Qwen3-0.6B --gpu_memory_utilization 0.85 --log_level INFO --attention_backend fa3
 ```
 
 send request:
@@ -50,15 +50,16 @@ curl -X POST "http://localhost:30000/flush_cache"
 
 - Scheduling
   - [x] FIFO
-  - [ ] Cache-Aware
+  - [x] aggressive max_new_token predict & decode retract
+  - [x] Cache-Aware
   - [ ] chunked prefill
 
 - KVcache Management
   - [x] page size == 1
   - [x] page size > 1
-  - [ ] Radix Attention
+  - [x] Radix Attention
     - [x] prefix match
-    - [ ] evict strategy
+    - [x] evict strategy
 
 - API support
   - [x] SGLang generate API

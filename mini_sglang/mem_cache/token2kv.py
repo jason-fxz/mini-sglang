@@ -190,7 +190,9 @@ class PageAllocator:
             torch.Tensor: The allocated page IDs.
         """
         if num > len(self.free_page):
-            raise RuntimeError("Not enough free pages available.")
+            raise RuntimeError(
+                f"Not enough free pages available. need {num}, free {len(self.free_page)}, total {self.page_num}"
+            )
 
         select_index = self.free_page[:num]
         self.free_page = self.free_page[num:]

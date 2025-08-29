@@ -11,9 +11,12 @@ from typing import TYPE_CHECKING, List, Optional, Union
 import torch
 
 from mini_sglang.managers.req_info import Req, ReqStatus
+from mini_sglang.managers.server_args import ServerArgs
+from mini_sglang.utils.global_vars import global_vars
 
 if TYPE_CHECKING:
     from mini_sglang.layers.attn.attn_backend import AttentionBackend
+    from mini_sglang.mem_cache.base_cache import BasePrefixCache
     from mini_sglang.mem_cache.req2token import ReqToTokenPool
     from mini_sglang.mem_cache.token2kv import KVCachePool, PageAllocator
 
@@ -75,6 +78,8 @@ class BatchInfo:
     page_allocator: PageAllocator = None
     # kv cache pool
     kv_cache_pool: KVCachePool = None
+    # tree cache
+    tree_cache: BasePrefixCache = None
 
     # Attention Backends
     attn_backend: AttentionBackend = None
@@ -92,12 +97,14 @@ class BatchInfo:
         req_to_token_pool: ReqToTokenPool,
         page_allocator: PageAllocator,
         kv_cache_pool: KVCachePool,
+        tree_cache: BasePrefixCache = None,
     ):
         return cls(
             reqs=reqs,
             req_to_token_pool=req_to_token_pool,
             page_allocator=page_allocator,
             kv_cache_pool=kv_cache_pool,
+            tree_cache=tree_cache,
             device=req_to_token_pool.device,
         )
 
@@ -114,6 +121,14 @@ class BatchInfo:
         Returns a tensor of indices to the token pool.
         """
         return self.req_to_token_pool.alloc(num_tokens)
+
+    def alloc_page_slots(self, num_pages: int) -> torch.Tensor:
+        """
+        Allocates page slots in the page allocator.
+        Returns a tensor of page ids.
+        """
+        self._evict_tree_if_needed(num_pages * self.page_allocator.page_size)
+        return self.page_allocator.alloc(num_pages)
 
     def prepare_for_extend(self):
         # Set forward mode
@@ -154,7 +169,7 @@ class BatchInfo:
 
         if self.page_allocator.page_size == 1:
             # Alloc kv cache
-            out_cache_loc = self.page_allocator.alloc(extend_num_tokens).to(
+            out_cache_loc = self.alloc_page_slots(extend_num_tokens).to(
                 self.device, non_blocking=True
             )
 
@@ -173,7 +188,7 @@ class BatchInfo:
             num_pages = [
                 (tokens + page_size - 1) // page_size for tokens in extend_lens
             ]
-            page_loc = self.page_allocator.alloc(sum(num_pages))
+            page_loc = self.alloc_page_slots(sum(num_pages))
             # Expand each page id to its token locations: [pid*page_size, (pid+1)*page_size)
             expanded = page_loc.unsqueeze(1) * page_size + torch.arange(
                 page_size, device=page_loc.device
@@ -244,13 +259,11 @@ class BatchInfo:
 
         # Alloc kv cache
         if self.page_allocator.page_size == 1:
-            out_cache_loc = self.page_allocator.alloc(bs).to(
-                self.device, non_blocking=True
-            )
+            out_cache_loc = self.alloc_page_slots(bs).to(self.device, non_blocking=True)
         else:
             page_size = self.page_allocator.page_size
             num_pages = sum(1 for l in seq_lens_old if l % page_size == 0)
-            page_loc = self.page_allocator.alloc(num_pages)
+            page_loc = self.alloc_page_slots(num_pages)
             # Expand each page id to its token locations: [pid*page_size, (pid+1)*page_size)
             pos_page = 0
             out_cache_loc = []
@@ -304,20 +317,125 @@ class BatchInfo:
         )
         self.out_cache_loc = torch.cat([self.out_cache_loc, other.out_cache_loc], dim=0)
 
-    def filter_reqs(self, exclude_indices: List[int]):
+    def filter_reqs(
+        self,
+        exclude_indices: Optional[List[int]] = None,
+        keep_indices: Optional[List[int]] = None,
+    ):
         """
         Filter the requests in the batch based on the given indices to keep.
 
         call this method before prepare_for_xxx!!
         """
-
-        if len(exclude_indices) == 0:
-            return
-
-        keep_indices = [i for i in range(self.batch_size) if i not in exclude_indices]
+        if keep_indices is None:
+            assert exclude_indices is not None
+            if len(exclude_indices) == 0:
+                return
+            keep_indices = [
+                i for i in range(self.batch_size) if i not in exclude_indices
+            ]
 
         self.reqs = [self.reqs[i] for i in keep_indices]
 
         # Tensors need to be updated
         self.seq_lens = self.seq_lens[keep_indices]
         self.req_pool_indices = self.req_pool_indices[keep_indices]
+
+    def _evict_tree_if_needed(self, num_tokens: int):
+        available_size = self.page_allocator.available_size()
+        if available_size < num_tokens:
+            self.tree_cache.evict(num_tokens - available_size)
+
+    def _count_next_decode_tokens(self, indices: List[int] = None, turns: int = 1):
+        page_size = self.page_allocator.page_size
+        if indices is None:
+            indices = range(self.batch_size)
+        num_page = (
+            len(indices) * turns
+            if page_size == 1
+            else sum(
+                (turns + (self.reqs[i].num_tokens - 1) % page_size) // page_size
+                for i in indices
+            )
+        )
+        num_tokens = num_page * page_size
+        return num_tokens
+
+    def check_decode_mem(self):
+        """Check if there is enough memory for decoding."""
+        num_tokens = self._count_next_decode_tokens()
+        # evict if not enough memory
+        self._evict_tree_if_needed(num_tokens)
+
+        return self.page_allocator.available_size() >= num_tokens
+
+    def retract_decode(self):
+        """Retract the decoding requests when there is not enough memory."""
+        sorted_indices = list(range(self.batch_size))
+
+        sorted_indices.sort(
+            key=lambda i: self.reqs[i].num_completion_tokens
+            - self.reqs[i].num_prompt_tokens,
+            reverse=True,
+        )
+
+        retracted_reqs = []
+
+        page_size = self.page_allocator.page_size
+
+        while self.page_allocator.available_size() < self._count_next_decode_tokens(
+            sorted_indices, turns=global_vars.retract_decode_steps
+        ):
+            idx = sorted_indices.pop()
+            req = self.reqs[idx]
+            retracted_reqs.append(req)
+
+            # if isinstance(self.tree_cache, ChunkCache):
+            #     # ChunkCache no eviction
+            #     page_indices = self.req_to_token_pool.req_to_page[
+            #         req.req_pool_idx, : (req.num_tokens + page_size - 1) // page_size
+            #     ]
+            #     self.page_allocator.free(page_indices)
+            #     self.req_to_token_pool.free(req.req_pool_idx)
+            # else:
+            assert len(req.prefix_indices) % page_size == 0
+            uncache_pos = len(req.prefix_indices) // page_size
+            page_indices = self.req_to_token_pool.req_to_page[
+                req.req_pool_idx,
+                uncache_pos : (req.num_tokens + page_size - 1) // page_size,
+            ]
+
+            self.page_allocator.free(page_indices)
+            self.req_to_token_pool.free(req.req_pool_idx)
+
+            # release node
+            self.tree_cache.dec_lock_ref(req.last_node)
+
+            num_tokens = self._count_next_decode_tokens(
+                sorted_indices, turns=global_vars.retract_decode_steps
+            )
+            self._evict_tree_if_needed(num_tokens)
+
+            req.reset_for_retract()
+
+            if len(sorted_indices) == 0:
+                raise RuntimeError(
+                    "Cannot retract any more requests to free up memory. No enough memory left for only one request."
+                )
+
+        self.filter_reqs(keep_indices=sorted_indices)
+
+        # estimate ratio
+        total_decode_tokens = sum(req.num_completion_tokens for req in self.reqs)
+        total_max_new_tokens = sum(
+            req.sampling_params.max_new_tokens for req in self.reqs
+        )
+
+        new_ratio = (
+            total_decode_tokens
+            + self._count_next_decode_tokens(turns=global_vars.retract_decode_steps)
+        ) / total_max_new_tokens
+
+        new_ratio = min(new_ratio, 1.0)
+
+        return retracted_reqs, new_ratio
