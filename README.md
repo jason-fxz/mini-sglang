@@ -70,3 +70,40 @@ curl -X POST "http://localhost:30000/flush_cache"
   - [x] Tensor Parallelism
   - [x] CUDA graph support for decode
   - [ ] Overlap Scheduling
+
+## Benchmark
+
+A6000(40G), Qwen3-8B. Use sglang.bench_serving to benchmark.
+
+```bash
+python3 -m sglang.bench_serving --backend sglang --num-prompt 200 --request-rate 3
+```
+
+|                                         | mini-sglang | sglang   |
+|-----------------------------------------|-------------|----------|
+| Backend                                 | sglang      | sglang   |
+| Traffic request rate                    | 3.0         | 3.0      |
+| Max request concurrency                 | not set     | not set  |
+| Successful requests                     | 200         | 200      |
+| Benchmark duration (s)                  | 90.15       | 88.72    |
+| Total input tokens                      | 64205       | 64205    |
+| Total generated tokens                  | 42957       | 42957    |
+| Total generated tokens (retokenized)    | 42954       | 42956    |
+| Request throughput (req/s)              | 2.22        | 2.25     |
+| Input token throughput (tok/s)          | 712.18      | 723.67   |
+| Output token throughput (tok/s)         | 476.49      | 484.18   |
+| Total token throughput (tok/s)          | 1188.66     | 1207.84  |
+| Concurrency                             | 15.59       | 15.25    |
+| **End-to-End Latency**                  |             |          |
+| Mean E2E Latency (ms)                   | 7029.06     | 6763.83  |
+| Median E2E Latency (ms)                 | 4582.41     | 4455.47  |
+| **Time to First Token (TTFT)**          |             |          |
+| Mean TTFT (ms)                          | 45.99       | 44.33    |
+| Median TTFT (ms)                        | 45.97       | 43.87    |
+| P99 TTFT (ms)                           | 63.18       | 60.25    |
+| **Inter-Token Latency (ITL)**           |             |          |
+| Mean ITL (ms)                           | 32.66       | 31.43    |
+| Median ITL (ms)                         | 31.14       | 30.60    |
+| P95 ITL (ms)                            | 57.04       | 54.65    |
+| P99 ITL (ms)                            | 59.68       | 58.51    |
+| Max ITL (ms)                            | 86.28       | 110.27   |
