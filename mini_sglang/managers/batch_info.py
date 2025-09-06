@@ -62,8 +62,10 @@ class BatchInfo:
     positions: torch.Tensor = None  # shape: [sum(input_seq_len)] type: int32
     # sequence lengths (only EXTEND mode)
     input_seq_lens: torch.Tensor = None  # shape: [batch_size] type: int32
+    input_seq_lens_max: int = 0
     # full sequence lengths
     seq_lens: torch.Tensor = None  # shape: [batch_size] type: int32
+    seq_lens_cpu: torch.Tensor = None  # shape: [batch_size] type: int32
     # prefix sequence lengths (only EXTEND mode)
     prefix_seq_lens: torch.Tensor = None  # shape: [batch_size] type: int32
 
@@ -150,6 +152,8 @@ class BatchInfo:
         extend_lens = [len(r.token_ids) - len(r.prefix_indices) for r in reqs]
         positions = [list(range(prefix_lens[i], seq_lens[i])) for i in range(bs)]
 
+        self.input_seq_lens_max = max(extend_lens)
+
         req_pool_indices_tensor = torch.tensor(req_pool_indices, dtype=torch.int32).to(
             self.device, non_blocking=True
         )
@@ -159,6 +163,7 @@ class BatchInfo:
         seq_lens_tensor = torch.tensor(seq_lens, dtype=torch.int32).to(
             self.device, non_blocking=True
         )
+        seq_lens_cpu_tensor = torch.tensor(seq_lens, dtype=torch.int32, device="cpu")
         prefix_lens_tensor = torch.tensor(prefix_lens, dtype=torch.int32).to(
             self.device, non_blocking=True
         )
@@ -233,6 +238,7 @@ class BatchInfo:
         self.input_ids = input_ids_tensor
         self.req_pool_indices = req_pool_indices_tensor
         self.seq_lens = seq_lens_tensor
+        self.seq_lens_cpu = seq_lens_cpu_tensor
         self.out_cache_loc = out_cache_loc
         self.input_seq_lens = input_lens_tensor
         self.prefix_seq_lens = prefix_lens_tensor
@@ -250,6 +256,7 @@ class BatchInfo:
         locs = self.seq_lens.clone()
         seq_lens_old = locs.tolist()
         self.seq_lens.add_(1)
+        self.seq_lens_cpu.add_(1)
         self.prefix_seq_lens = None
         self.input_seq_lens = None
 
@@ -298,20 +305,12 @@ class BatchInfo:
         """
         Merge another batch into this batch.
         """
-        # assert (
-        #     self.forward_mode == other.forward_mode
-        # ), "Cannot merge batches with different forward modes."
 
         self.reqs.extend(other.reqs)
         self.input_ids = torch.cat([self.input_ids, other.input_ids], dim=0)
         self.positions = torch.cat([self.positions, other.positions], dim=0)
         self.seq_lens = torch.cat([self.seq_lens, other.seq_lens], dim=0)
-        # self.input_seq_lens = torch.cat(
-        #     [self.input_seq_lens, other.input_seq_lens], dim=0
-        # )
-        # self.prefix_seq_lens = torch.cat(
-        #     [self.prefix_seq_lens, other.prefix_seq_lens], dim=0
-        # )
+        self.seq_lens_cpu = torch.cat([self.seq_lens_cpu, other.seq_lens_cpu], dim=0)
         self.req_pool_indices = torch.cat(
             [self.req_pool_indices, other.req_pool_indices], dim=0
         )
@@ -339,6 +338,7 @@ class BatchInfo:
 
         # Tensors need to be updated
         self.seq_lens = self.seq_lens[keep_indices]
+        self.seq_lens_cpu = self.seq_lens_cpu[keep_indices]
         self.req_pool_indices = self.req_pool_indices[keep_indices]
 
     def _evict_tree_if_needed(self, num_tokens: int):

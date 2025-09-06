@@ -33,7 +33,7 @@ curl -X POST "http://localhost:30000/flush_cache"
 
 - Known Issues
   - ~~GPU memory leak~~
-  - GPU-CPU Synchronization issue
+  - ~~GPU-CPU Synchronization issue~~
 
 - Basic Architecture
 

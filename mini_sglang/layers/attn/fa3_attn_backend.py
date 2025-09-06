@@ -48,7 +48,7 @@ class FlashAttn3Backend(AttentionBackend):
 
         # Get sequence lengths for key/values
         metadata.cache_seqlens_int32 = seqlens_in_batch.to(torch.int32)
-        metadata.max_seqlen_k = batch.seq_lens.max().item()
+        metadata.max_seqlen_k = batch.seq_lens_cpu.max().item()
         metadata.cu_seqlens_k = torch.nn.functional.pad(
             torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
         )
@@ -68,7 +68,7 @@ class FlashAttn3Backend(AttentionBackend):
 
         if batch.forward_mode.is_extend():
             # Get sequence lengths for query
-            metadata.max_seqlen_q = batch.input_seq_lens.max().item()
+            metadata.max_seqlen_q = batch.input_seq_lens_max
             metadata.cu_seqlens_q = torch.nn.functional.pad(
                 torch.cumsum(batch.input_seq_lens, dim=0, dtype=torch.int32), (1, 0)
             )
@@ -205,6 +205,7 @@ class FlashAttn3Backend(AttentionBackend):
         bs: int,
         req_pool_indices: torch.tensor,
         seq_lens: torch.tensor,
+        seq_lens_cpu: torch.tensor,
         forward_mode: ForwardMode,
     ):
         """
@@ -218,7 +219,7 @@ class FlashAttn3Backend(AttentionBackend):
 
         if forward_mode.is_decode():
             metadata.cache_seqlens_int32.copy_(seq_lens.to(torch.int32))
-            metadata.max_seqlen_k = seq_lens.max().item()
+            metadata.max_seqlen_k = seq_lens_cpu.max().item()
             metadata.cu_seqlens_k.copy_(
                 torch.nn.functional.pad(
                     torch.cumsum(seq_lens, dim=0, dtype=torch.int32), (1, 0)
@@ -230,4 +231,3 @@ class FlashAttn3Backend(AttentionBackend):
             metadata.page_table[:, :max_num_page].copy_(
                 self.req_to_token_pool.req_to_page[req_pool_indices, :max_num_page]
             )
-            # TODO: page_size > 1

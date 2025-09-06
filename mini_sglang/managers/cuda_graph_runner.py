@@ -157,6 +157,7 @@ class CudaGraphRunner:
             bs,
             req_pool_indices=self.req_pool_indices,
             seq_lens=self.seq_lens,
+            seq_lens_cpu=batch.seq_lens_cpu,
             forward_mode=batch.forward_mode,
         )
 

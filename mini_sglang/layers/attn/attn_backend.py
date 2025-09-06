@@ -89,6 +89,7 @@ class AttentionBackend(ABC):
         bs: int,
         req_pool_indices: torch.Tensor,
         seq_lens: torch.Tensor,
+        seq_lens_cpu: torch.Tensor,
         forward_mode: ForwardMode,
     ):
         """Init the metadata for a forward pass for replaying a cuda graph."""
