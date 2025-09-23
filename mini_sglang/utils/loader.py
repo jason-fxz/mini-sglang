@@ -23,3 +23,12 @@ def load_model(config: ModelConfig) -> nn.Module:
             model.load_weights(weights)
 
     return model
+
+
+def load_dummy_model(config: ModelConfig) -> nn.Module:
+    model = Qwen3ForCausalLM(config.hf_config)
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            nn.init.normal_(param, mean=0.0, std=0.1)
+    return model

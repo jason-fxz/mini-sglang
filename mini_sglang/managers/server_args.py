@@ -44,6 +44,8 @@ class ServerArgs:
     schedule_conservativeness: float = 1.0
     max_prefill_tokens: int = 16384
 
+    dummy_load: bool = False
+
     def __post_init__(self):
         self.model = os.path.expanduser(self.model)
         assert os.path.isdir(self.model)
@@ -168,6 +170,11 @@ class ServerArgs:
             type=int,
             default=ServerArgs.max_prefill_tokens,
             help="Maximum number of tokens to prefill for each batch.",
+        )
+        parser.add_argument(
+            "--dummy_load",
+            action="store_true",
+            help="Load a dummy model with random weights instead of the actual model. Useful for testing loading and inference pipeline without using real model weights.",
         )
 
     @classmethod

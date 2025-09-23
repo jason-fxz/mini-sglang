@@ -12,7 +12,7 @@ from mini_sglang.managers.sampling_params import SamplingParams
 from mini_sglang.managers.server_args import ServerArgs
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
 from mini_sglang.mem_cache.token2kv import KVCachePool, MHAKVPool, PageAllocator
-from mini_sglang.utils.loader import load_model
+from mini_sglang.utils.loader import load_dummy_model, load_model
 from mini_sglang.utils.model_config import ModelConfig
 from mini_sglang.utils.utils import get_available_gpu_memory
 
@@ -76,7 +76,10 @@ class ModelRunner:
 
     def init_load_model(self, model_config: ModelConfig):
         before_mem = get_available_gpu_memory(self.gpu_id)
-        self.model = load_model(model_config)
+        if self.server_args.dummy_load:
+            self.model = load_dummy_model(model_config)
+        else:
+            self.model = load_model(model_config)
         after_mem = get_available_gpu_memory(self.gpu_id)
 
         self.weight_load_mem_usage = before_mem - after_mem
