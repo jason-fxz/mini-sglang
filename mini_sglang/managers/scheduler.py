@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 import setproctitle
 import torch
 import zmq
+from sgl_kernel import spatial
 from torch import distributed as dist
 
 from mini_sglang.layers.sampler import Sampler
@@ -94,6 +95,12 @@ class Scheduler:
         # init dist group
         self.init_dist_group(tp_rank, self.tp_size)
 
+        # init green ctx
+        sm_counts = spatial.get_sm_available(gpu_id)
+        self.streams_group = spatial.create_greenctx_stream_by_value(
+            sm_counts // 2, sm_counts - (sm_counts // 2), gpu_id
+        )
+
         # init model runner
         self.model_config = ModelConfig(server_args.model)
         self.model_runner = ModelRunner(
@@ -102,6 +109,7 @@ class Scheduler:
             gpu_id=gpu_id,
             tp_rank=tp_rank,
             tp_size=self.tp_size,
+            stream=self.streams_group[0],
         )
         self.max_total_num_tokens = self.model_runner.num_tokens
 
@@ -503,7 +511,8 @@ class Scheduler:
             self.cur_batch = batch
 
             if batch:
-                result = self.run_batch(batch)
+                with self.streams_group[0]:
+                    result = self.run_batch(batch)
                 self.process_batch_result(batch, result)
             else:
                 self.check_memory()

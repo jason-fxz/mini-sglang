@@ -60,7 +60,10 @@ class CudaGraphRunner:
             outputs = forward(batch.input_ids, batch.positions, batch)
 
         global _global_graph_memory_pool
-        with torch.cuda.graph(graph, _global_graph_memory_pool):
+        with torch.cuda.graph(
+            graph, _global_graph_memory_pool, self.model_runner.stream
+        ):
+            assert self.model_runner.stream == torch.cuda.current_stream()
             outputs = forward(batch.input_ids, batch.positions, batch)
             self.next_token_logits[:bs] = outputs.next_token_logits
             outputs = LogitsProcessorOutput(self.next_token_logits[:bs])

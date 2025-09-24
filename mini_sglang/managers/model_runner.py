@@ -8,6 +8,7 @@ from mini_sglang.layers.logits_processor import LogitsProcessorOutput
 from mini_sglang.layers.sampler import Sampler
 from mini_sglang.managers.batch_info import BatchInfo
 from mini_sglang.managers.cuda_graph_runner import CudaGraphRunner
+from mini_sglang.managers.req_info import Req
 from mini_sglang.managers.sampling_params import SamplingParams
 from mini_sglang.managers.server_args import ServerArgs
 from mini_sglang.mem_cache.req2token import ReqToTokenPool
@@ -31,6 +32,7 @@ class ModelRunner:
         page_allocator: Optional[PageAllocator] = None,
         kv_cache_pool: Optional[KVCachePool] = None,
         sampling_params: Optional[SamplingParams] = None,
+        stream: Optional[torch.cuda.Stream] = None,
     ):
         self.device = server_args.device
         self.gpu_id = gpu_id
@@ -40,6 +42,8 @@ class ModelRunner:
         self.page_size = server_args.page_size
         self.model_config = model_config
         self.server_args = server_args
+
+        self.stream = stream
 
         torch.set_default_dtype(model_config.hf_config.torch_dtype)
         torch.set_default_device(self.device)
@@ -65,14 +69,15 @@ class ModelRunner:
         self.attn_backend = None
         self.init_attn_backend()
 
-        self.init_cuda_graph()
-
-        torch.set_default_device("cpu")
-
         self.sampler = Sampler()
         self.sampling_params = sampling_params or SamplingParams(
             eos_token_id=model_config.hf_config.eos_token_id
         )
+
+        self.warmup()
+        self.init_cuda_graph()
+
+        torch.set_default_device("cpu")
 
     def init_load_model(self, model_config: ModelConfig):
         before_mem = get_available_gpu_memory(self.gpu_id)
@@ -227,6 +232,28 @@ class ModelRunner:
             )
 
         return ret, can_run_cuda_graph
+
+    def warmup(self):
+        logger.info("Warming up the model runner with a dummy request.")
+        req = Req("test", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], SamplingParams())
+        batch = BatchInfo.init_new(
+            reqs=[req],
+            req_to_token_pool=self.req_to_token_pool,
+            kv_cache_pool=self.kv_cache_pool,
+            page_allocator=self.page_allocator,
+        )
+        batch.prepare_for_extend()
+        logits = self.forward_extend(batch)
+        self.process_extend_result(batch, logits)
+        for _ in range(10):
+            batch.prepare_for_decode()
+            logits = self.forward_decode(batch)
+            self.process_decode_result(batch, logits)
+
+        self.req_to_token_pool.clear()
+        self.page_allocator.clear()
+
+        logger.info("Warmup completed.")
 
     def process_extend_result(self, batch: BatchInfo, logits: LogitsProcessorOutput):
         """
